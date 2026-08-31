@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Any, Awaitable, Callable
 
-from config import AODP_NATS_RECONNECT_MAX_SECONDS, AODP_NATS_RECONNECT_SECONDS
+from config import AODP_LOCATION_NAMES, AODP_NATS_RECONNECT_MAX_SECONDS, AODP_NATS_RECONNECT_SECONDS
 from services.market_data import MarketDataAdapter, NormalizedMarketOrder, utc_now
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,8 @@ class AODPNatsAdapter(MarketDataAdapter):
 
     def _normalize_order(self, raw: dict[str, Any], *, server: str, observed_at: str) -> NormalizedMarketOrder | None:
         item_id = raw.get("ItemTypeId")
-        city = raw.get("LocationId")
+        location_id = raw.get("LocationId")
+        city = AODP_LOCATION_NAMES.get(str(location_id), str(location_id)) if location_id is not None else None
         quality = raw.get("QualityLevel")
         price = raw.get("UnitPriceSilver")
         quantity = raw.get("Amount")
@@ -75,7 +76,7 @@ class AODPNatsAdapter(MarketDataAdapter):
             source=self.source_name,
             server=server,
             item_id=str(item_id),
-            city=str(city),
+            city=city,
             quality=quality_i,
             side=side,
             price=price_f,
