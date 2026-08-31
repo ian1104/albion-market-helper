@@ -98,7 +98,6 @@ jobs:
           import asyncio
           import json
           from collections import defaultdict
-          from datetime import datetime, timezone
 
           import nats
 
@@ -112,13 +111,14 @@ jobs:
 
           DB_PATH = '/tmp/amh-phase18-live.db'
           OBSERVATION_SECONDS = 45
-          MAX_MESSAGES = 100
+          MAX_MESSAGES = 150
           db = Database(DB_PATH)
           db.initialize()
           adapter = AODPNatsAdapter()
           received = defaultdict(int)
           parsed = defaultdict(int)
           samples = []
+          sample_keys = set()
           stop = asyncio.Event()
 
           async def consume(server, port):
@@ -135,7 +135,9 @@ jobs:
                       orders = adapter.normalize(message.data, server=server)
                       for order in orders:
                           db.upsert_liquidity_order(order)
-                          if len(samples) < 20:
+                          key = (order.server, order.item_id, order.city, order.quality)
+                          if key not in sample_keys and len(samples) < 100:
+                              sample_keys.add(key)
                               samples.append({
                                   'server': order.server,
                                   'item_id': order.item_id,
@@ -176,7 +178,8 @@ jobs:
               'stage': 'live_reception',
               'received_messages': dict(received),
               'parsed_orders': dict(parsed),
-              'sample_orders': samples,
+              'unique_item_city_pairs': len(samples),
+              'sample_orders': samples[:20],
           }, indent=2))
 
           total_messages = sum(received.values())
@@ -198,35 +201,38 @@ jobs:
 
           # Verify that persisted live orders are visible through the existing liquidity provider.
           live_pairs = []
+          live_pair_keys = set()
+          provider = DatabaseLiquidityProvider(db, max_age_minutes=15, source='aodp-nats')
           for row in samples:
-              snapshot = DatabaseLiquidityProvider(db, max_age_minutes=15, source='aodp-nats').get(
-                  row['server'], row['item_id'], row['city'], row['quality']
-              )
+              key = (row['server'], row['item_id'], row['city'], row['quality'])
+              if key in live_pair_keys:
+                  continue
+              snapshot = provider.get(row['server'], row['item_id'], row['city'], row['quality'])
               if snapshot is not None and snapshot.available:
-                  live_pairs.append((row['server'], row['item_id'], row['city'], row['quality']))
+                  live_pair_keys.add(key)
+                  live_pairs.append(key)
           print(json.dumps({'stage': 'liquidity', 'status': 'PASS' if live_pairs else 'NO_EXECUTABLE_LIQUIDITY', 'pairs_checked': len(samples), 'available_pairs': len(live_pairs)}))
           if not live_pairs:
               raise SystemExit('Live NATS orders were persisted, but no fresh liquidity snapshot was available')
 
-          # Try to prove the complete live-order -> liquidity -> arbitrage chain.
-          # No opportunity is required for PASS because a real market may simply
-          # have no profitable spread at observation time.
-          market = MarketService(db, server='east')
-          checked_items = []
+          # Try to prove the complete live-order -> liquidity -> REST price -> arbitrage chain.
+          # No opportunity is required for PASS because a real market may simply have no profitable spread.
+          market_services = {server: MarketService(db, server=server) for server in SUPPORTED_SERVERS}
           opportunity_count = 0
-          for server, item_id, city, quality in live_pairs[:10]:
-              if server != 'east' or item_id in checked_items:
+          attempted_items = set()
+          for server, item_id, city, quality in live_pairs:
+              if item_id in attempted_items:
                   continue
-              checked_items.append(item_id)
-              cities = sorted({r[2] for r in live_pairs if r[0] == server and r[1] == item_id})
+              cities = sorted({r[2] for r in live_pairs if r[0] == server and r[1] == item_id and r[3] == quality})
               if len(cities) < 2:
                   continue
+              attempted_items.add(item_id)
               try:
                   records = AlbionApiService(host=SUPPORTED_SERVERS[server], timeout=10, retry_count=1).fetch_prices(
                       [item_id], cities, [quality]
                   )
                   if records:
-                      market.save_snapshot_batch(records)
+                      market_services[server].save_snapshot_batch(records)
                   ops = ArbitrageService(db, server).opportunities(
                       item_id=item_id, quality=quality, quantity=1,
                       cost_model=CostModel(configured=True), limit=20,
@@ -234,12 +240,12 @@ jobs:
                   )
                   opportunity_count += len(ops)
                   if ops:
-                      print(json.dumps({'stage': 'live_opportunity', 'status': 'PASS', 'item_id': item_id, 'opportunities': len(ops)}))
+                      print(json.dumps({'stage': 'live_opportunity', 'status': 'PASS', 'server': server, 'item_id': item_id, 'opportunities': len(ops)}))
                       break
               except Exception as exc:
-                  print(json.dumps({'stage': 'live_opportunity', 'status': 'BLOCKED', 'item_id': item_id, 'error': f'{type(exc).__name__}: {exc}'}))
+                  print(json.dumps({'stage': 'live_opportunity', 'status': 'BLOCKED', 'server': server, 'item_id': item_id, 'error': f'{type(exc).__name__}: {exc}'}))
 
-          print(json.dumps({'stage': 'live_opportunity_summary', 'opportunities_found': opportunity_count}))
+          print(json.dumps({'stage': 'live_opportunity_summary', 'items_attempted': len(attempted_items), 'opportunities_found': opportunity_count}))
           print('Live NATS ingestion + persistence + liquidity validation: PASS')
           print('Live opportunity generation: PASS' if opportunity_count else 'Live opportunity generation: NO CURRENT OPPORTUNITY (pipeline reached arbitrage evaluation)')
           PY
