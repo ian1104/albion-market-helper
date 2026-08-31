@@ -137,7 +137,12 @@ class ArbitrageStrategy:
         self._service = arbitrage_service
 
     def evaluate(self, **inputs: Any) -> list[BusinessOpportunity]:
-        opportunities = self._service.opportunities(
+        service = self._service
+        requested_server = inputs.get("server")
+        if requested_server and getattr(service, "server", None) != requested_server:
+            provider = getattr(service, "liquidity_provider", None)
+            service = type(service)(service.database, requested_server, provider)
+        opportunities = service.opportunities(
             item_id=inputs.get("item_id"),
             quality=inputs.get("quality", 1),
             quantity=inputs.get("quantity", 1),
@@ -147,7 +152,7 @@ class ArbitrageStrategy:
             sort=inputs.get("source_sort", "roi"),
             limit=inputs.get("source_limit", 100),
             cost_model=inputs.get("cost_model"),
-            freshness_max_age_minutes=inputs.get("freshness_max_age_minutes"),
+            freshness_max_age_minutes=inputs.get("freshness_max_age_minutes", 30.0),
             historical_range_start=inputs.get("historical_range_start"),
             historical_range_end=inputs.get("historical_range_end"),
         )
@@ -202,9 +207,8 @@ def default_strategy_registry(arbitrage_service: Any | None = None) -> StrategyR
     """Build the registry; when a service is supplied, arbitrage is executable."""
 
     registry = StrategyRegistry()
-    strategy = ArbitrageStrategy(arbitrage_service) if arbitrage_service is not None else None
-    if strategy is not None:
-        registry.register(strategy)
+    if arbitrage_service is not None:
+        registry.register(ArbitrageStrategy(arbitrage_service))
     else:
         registry.register_definition(ArbitrageStrategy.definition)
     return registry
