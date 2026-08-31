@@ -18,20 +18,22 @@ function Value({ label, value }) {
   return <div><span>{label}</span><strong>{value ?? '—'}</strong></div>;
 }
 
-function Dashboard({ server, capital, setCapital, risk, setRisk, strategy, setStrategy, sort, setSort, opportunities }) {
+function Dashboard({ server, capital, setCapital, risk, setRisk, strategy, setStrategy, sort, setSort, opportunities, strategies }) {
+  const implemented = strategies.filter((s) => s.calculator_key);
   return <section>
     <h1>Albion Business Dashboard</h1>
     <section className="controls">
       <label>Server<select value={server} onChange={() => {}} disabled><option>{server}</option></select></label>
       <label>Capital (Silver)<input type="number" min="1" value={capital} onChange={(e) => setCapital(e.target.value)} placeholder="Enter capital" /></label>
       <label>Risk<select value={risk} onChange={(e) => setRisk(e.target.value)}><option value="">Any</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="unknown">Unknown</option></select></label>
-      <label>Strategy<select value={strategy} onChange={(e) => setStrategy(e.target.value)}><option value="">All implemented</option><option value="arbitrage">Arbitrage</option></select></label>
+      <label>Strategy<select value={strategy} onChange={(e) => setStrategy(e.target.value)}><option value="">All implemented</option>{implemented.map((s) => <option key={s.strategy_id} value={s.strategy_id}>{s.name}</option>)}</select></label>
       <label>Rank<select value={sort} onChange={(e) => setSort(e.target.value)}><option value="profit">Expected Profit</option><option value="roi">ROI</option><option value="capital_efficiency">Capital Efficiency</option><option value="capital">Required Capital</option><option value="risk">Risk</option><option value="confidence">Confidence</option><option value="freshness">Freshness</option></select></label>
     </section>
     <h2>Best Opportunities</h2>
     {!opportunities.length ? <div className="empty">No implemented strategy opportunities available.</div> : opportunities.map((o) => <section className="card opportunity" key={`${o.strategy_id}-${o.title}`}>
       <div><strong>{o.strategy_id}</strong><br />{o.title}</div>
       <Value label="Expected Profit" value={o.expected_profit} /><Value label="ROI" value={o.roi_percent == null ? 'Unavailable' : `${o.roi_percent.toFixed(2)}%`} />
+      <Value label="Profit / Hour" value={o.profit_per_hour == null ? 'Unavailable' : o.profit_per_hour.toFixed(2)} />
       <Value label="Required Capital" value={o.required_capital} /><Value label="Utilization" value={o.capital_utilization_percent == null ? '—' : `${o.capital_utilization_percent.toFixed(1)}%`} />
       <Value label="Risk" value={o.risk} /><Value label="Liquidity" value={o.liquidity} /><Value label="Confidence" value={o.confidence} /><Value label="Freshness" value={o.freshness} />
     </section>)}
@@ -110,8 +112,8 @@ function App() {
   const sell = analysis?.statistics?.sell || {};
 
   return <main>
-    <Dashboard server={server === 'east' ? 'Asia / East' : server} capital={capital} setCapital={setCapital} risk={risk} setRisk={setRisk} strategy={strategy} setStrategy={setStrategy} sort={dashboardSort} setSort={setDashboardSort} opportunities={dashboardOpps} />
-    <section className="status">Implemented strategies: {strategies.filter((s) => s.calculator_key).map((s) => s.name).join(', ') || 'None'}. Unimplemented strategies are not fabricated.</section>
+    <Dashboard server={server === 'east' ? 'Asia / East' : server} capital={capital} setCapital={setCapital} risk={risk} setRisk={setRisk} strategy={strategy} setStrategy={setStrategy} sort={dashboardSort} setSort={setDashboardSort} opportunities={dashboardOpps} strategies={strategies} />
+    <section className="status">Registered strategies: {strategies.map((s) => `${s.name}${s.calculator_key ? '' : ' (metadata only)'}`).join(', ') || 'None'}. No fabricated strategy results are shown.</section>
     <button onClick={loadDashboard}>Refresh Dashboard</button>
 
     <h2>Market Analysis</h2>
