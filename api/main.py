@@ -239,6 +239,18 @@ def arbitrage_opportunities(
                      safety_buffer=safety_buffer, freshness_max_age_minutes=freshness_max_age_minutes)
 
 
+@app.get("/api/arbitrage/liquidity")
+def arbitrage_liquidity(
+    item_id: str = Query(..., min_length=1), city: str = Query(..., min_length=1),
+    quality: int = Query(1, ge=1), server: str = ALBION_SERVER,
+):
+    _validate_server(server)
+    try:
+        return ArbitrageService(database, server).liquidity(item_id, city, quality)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
 @app.get("/api/arbitrage/calculate")
 def arbitrage_calculate(
     buy_price: float = Query(..., gt=0), sell_price: float = Query(..., gt=0), quantity: int = Query(1, ge=1),

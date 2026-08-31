@@ -7,6 +7,7 @@ from typing import Any
 
 from config import ALBION_SERVER, FRESH_DATA_MAX_AGE_MINUTES, SUPPORTED_SERVERS
 from db.database import Database
+from services.liquidity import LiquidityProvider, UnavailableLiquidityProvider, executable_quantity
 
 
 @dataclass(frozen=True)
@@ -84,11 +85,12 @@ class ProfitCalculator:
 
 
 class ArbitrageService:
-    def __init__(self, database: Database, server: str = ALBION_SERVER):
+    def __init__(self, database: Database, server: str = ALBION_SERVER, liquidity_provider: LiquidityProvider | None = None):
         if server not in SUPPORTED_SERVERS:
             raise ValueError(f"unsupported server: {server}")
         self.database = database
         self.server = server
+        self.liquidity_provider = liquidity_provider or UnavailableLiquidityProvider()
         database.initialize()
 
     @staticmethod
@@ -117,6 +119,14 @@ class ArbitrageService:
 
     def _current_rows(self, item_id: str | None, quality: int) -> list[dict[str, Any]]:
         return self.database.current_prices(item_id=item_id, quality=quality, server=self.server)
+
+    @staticmethod
+    def _confidence(freshness: dict[str, Any], historical: dict[str, Any], buy_liquidity: dict[str, Any], sell_liquidity: dict[str, Any]) -> str:
+        if freshness["status"] in {"stale", "unknown"}:
+            return "LOW"
+        if not historical["data_sufficient"] or buy_liquidity["status"] != "available" or sell_liquidity["status"] != "available":
+            return "MEDIUM"
+        return "HIGH"
 
     def _historical_pair(self, item_id: str, quality: int, buy_city: str, sell_city: str, range_start: str | None = None, range_end: str | None = None) -> dict[str, Any]:
         rows = self.database.history(item_id, None, quality, range_start, range_end, server=self.server)
@@ -148,6 +158,22 @@ class ArbitrageService:
             "positive_spread_ratio": sum(x > 0 for x in spreads) / len(spreads) * 100.0,
         }
 
+    def _liquidity(self, item_id: str, city: str, quality: int) -> dict[str, Any]:
+        snapshot = self.liquidity_provider.get(self.server, item_id, city, quality)
+        if snapshot is None or not snapshot.available:
+            return {
+                "status": "unavailable", "available_buy_quantity": None,
+                "available_sell_quantity": None, "buy_depth": (), "sell_depth": (), "source": None,
+            }
+        return {
+            "status": "available",
+            "available_buy_quantity": snapshot.buy_quantity,
+            "available_sell_quantity": snapshot.sell_quantity,
+            "buy_depth": snapshot.buy_depth,
+            "sell_depth": snapshot.sell_depth,
+            "source": snapshot.source,
+        }
+
     def opportunities(
         self,
         item_id: str | None = None,
@@ -171,8 +197,8 @@ class ArbitrageService:
                 raise ValueError(f"{name} must be >= 0")
         if freshness_max_age_minutes < 0:
             raise ValueError("freshness_max_age_minutes must be >= 0")
-        if sort not in {"profit", "roi", "spread", "stability", "freshness"}:
-            raise ValueError("sort must be one of: profit, roi, spread, stability, freshness")
+        if sort not in {"profit", "roi", "spread", "stability", "freshness", "confidence"}:
+            raise ValueError("sort must be one of: profit, roi, spread, stability, freshness, confidence")
         cost_model = cost_model or CostModel()
         rows = self._current_rows(item_id, quality)
         grouped: dict[str, list[dict[str, Any]]] = {}
@@ -201,6 +227,43 @@ class ArbitrageService:
                     continue
                 freshness = self._freshness(buy.get("sell_price_min_date"), sell.get("buy_price_max_date"), max_age_minutes=freshness_max_age_minutes)
                 historical = self._historical_pair(current_item, quality, buy["city"], sell["city"], historical_range_start, historical_range_end)
+                buy_liquidity = self._liquidity(current_item, buy["city"], quality)
+                sell_liquidity = self._liquidity(current_item, sell["city"], quality)
+                executable = executable_quantity(
+                    quantity, buy_liquidity["available_buy_quantity"], sell_liquidity["available_sell_quantity"]
+                )
+                confidence = self._confidence(freshness, historical, buy_liquidity, sell_liquidity)
+                realistic = {"status": "unavailable", "quantity": None, "buy_execution_price": None, "sell_execution_price": None, "net_profit": None, "roi_percent": None}
+                slippage = {"status": "unavailable", "buy_percent": None, "sell_percent": None, "total_percent": None}
+                if executable is not None and executable > 0:
+                    buy_execution = buy_price
+                    sell_execution = sell_price
+                    buy_depth = buy_liquidity.get("buy_depth") or ()
+                    sell_depth = sell_liquidity.get("sell_depth") or ()
+                    if buy_depth and sell_depth:
+                        from services.liquidity import slippage_percent, weighted_average_execution_price
+                        weighted_buy = weighted_average_execution_price(buy_depth, executable)
+                        weighted_sell = weighted_average_execution_price(sell_depth, executable)
+                        if weighted_buy is not None and weighted_sell is not None:
+                            buy_execution = weighted_buy
+                            sell_execution = weighted_sell
+                            buy_slip = slippage_percent(buy_price, buy_execution, "buy")
+                            sell_slip = slippage_percent(sell_price, sell_execution, "sell")
+                            slippage = {
+                                "status": "available",
+                                "buy_percent": buy_slip,
+                                "sell_percent": sell_slip,
+                                "total_percent": buy_slip + sell_slip,
+                            }
+                    realistic_profit = ProfitCalculator(cost_model).calculate(buy_execution, sell_execution, int(executable))
+                    realistic = {
+                        "status": "available",
+                        "quantity": executable,
+                        "buy_execution_price": buy_execution,
+                        "sell_execution_price": sell_execution,
+                        "net_profit": realistic_profit["estimated_net_profit"],
+                        "roi_percent": realistic_profit["roi_percent"],
+                    }
                 result.append({
                     "status": ("stale_data" if freshness["status"] == "stale" else ("cost_model_missing" if not cost_model.configured else "valid")),
                     "server": self.server,
@@ -212,6 +275,11 @@ class ArbitrageService:
                     "profit": profit,
                     "historical": historical,
                     "data": {"price_timestamp": {"buy": buy.get("sell_price_min_date"), "sell": sell.get("buy_price_max_date")}, "freshness": freshness["status"], "data_age_minutes": freshness["age_minutes"]},
+                    "liquidity": {"buy": buy_liquidity, "sell": sell_liquidity, "requested_quantity": quantity, "executable_quantity": executable},
+                    "slippage": slippage,
+                    "realistic_profit": realistic,
+                    "confidence": confidence,
+                    "data_availability": {"liquidity": "available" if executable is not None else "unavailable", "historical": "available" if historical["data_sufficient"] else "insufficient_historical_data", "overall": "partial" if executable is None else "available"},
                     "market_type": "city",
                 })
         def key(o: dict[str, Any]):
@@ -221,11 +289,17 @@ class ArbitrageService:
             if sort == "spread": return o["spread"]["percent"]
             if sort == "stability": return hist["positive_spread_ratio"] if hist["positive_spread_ratio"] is not None else -1
             if sort == "freshness": return -(o["data"]["data_age_minutes"] if o["data"]["data_age_minutes"] is not None else float("inf"))
+            if sort == "confidence": return {"HIGH": 3, "MEDIUM": 2, "LOW": 1, "UNAVAILABLE": 0}.get(o["confidence"], 0)
             return float(profit["roi_percent"] if profit["roi_percent"] is not None else profit["gross_roi_percent"])
         result.sort(key=key, reverse=True)
         for rank, opportunity in enumerate(result[:limit], 1):
             opportunity["rank"] = rank
         return result[:limit]
+
+    def liquidity(self, item_id: str, city: str, quality: int = 1) -> dict[str, Any]:
+        if quality < 1:
+            raise ValueError("quality must be positive")
+        return {"server": self.server, "item_id": item_id, "city": city, "quality": quality, "liquidity": self._liquidity(item_id, city, quality)}
 
     def calculate(self, buy_price: float, sell_price: float, quantity: int, cost_model: CostModel | None = None) -> dict[str, Any]:
         if buy_price <= 0 or sell_price < 0:
