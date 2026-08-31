@@ -60,7 +60,7 @@ def test_aodp_numeric_location_id_is_normalized_to_market_city():
     order = {
         "Id": 43,
         "ItemTypeId": "T5_SHOES_PLATE_SET1@2",
-        "LocationId": 3004,
+        "LocationId": 3010,
         "QualityLevel": 4,
         "UnitPriceSilver": 50000,
         "Amount": 2,
