@@ -144,3 +144,4 @@ def test_consumer_isolates_malformed_message_and_continues(tmp_path):
     assert consumer.messages_received == 2
     assert consumer.invalid_messages == 1
     assert consumer.orders_saved == 3
+    assert consumer.last_message_at is not None
