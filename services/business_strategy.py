@@ -60,6 +60,7 @@ class BusinessOpportunity:
     expected_cost: float | None = None
     expected_profit: float | None = None
     roi_percent: float | None = None
+    profit_per_hour: float | None = None
     risk: RiskLevel = RiskLevel.UNKNOWN
     liquidity: str | None = None
     confidence: str = "UNAVAILABLE"
@@ -203,12 +204,15 @@ class ArbitrageStrategy:
         return result
 
 
-def default_strategy_registry(arbitrage_service: Any | None = None) -> StrategyRegistry:
-    """Build the registry; when a service is supplied, arbitrage is executable."""
+def default_strategy_registry(arbitrage_service: Any | None = None, database: Any | None = None) -> StrategyRegistry:
+    """Build the registry with definitions for all planned strategies and executable implementations when dependencies exist."""
 
     registry = StrategyRegistry()
+    registry.register_definition(ArbitrageStrategy.definition)
+    from services.crafting_strategy import CraftingStrategy
+    registry.register_definition(CraftingStrategy.definition)
     if arbitrage_service is not None:
         registry.register(ArbitrageStrategy(arbitrage_service))
-    else:
-        registry.register_definition(ArbitrageStrategy.definition)
+    if database is not None:
+        registry.register(CraftingStrategy(database))
     return registry
