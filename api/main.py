@@ -17,6 +17,7 @@ from services.collector import Collector
 from services.market_service import MarketService
 from services.scheduler import CollectorScheduler
 from services.analysis_service import AnalysisService, RANGES
+from services.arbitrage_service import ArbitrageService, CostModel
 from config import ALBION_SERVER, SUPPORTED_SERVERS
 
 
@@ -193,3 +194,62 @@ def market_spread(item_id: str = Query(..., min_length=1), quality: int = Query(
         return result
     except Exception as exc:
         raise _analysis_error(exc)
+
+
+def _cost_model(purchase_fee: float, selling_fee: float, transaction_tax: float, transport_cost: float, safety_buffer: float, configured: bool) -> CostModel:
+    return CostModel(purchase_fee=purchase_fee, selling_fee=selling_fee, transaction_tax=transaction_tax, transport_cost=transport_cost, safety_buffer=safety_buffer, configured=configured)
+
+
+@app.get("/api/arbitrage")
+def arbitrage(
+    item_id: str | None = Query(None, min_length=1), quality: int = Query(1, ge=1),
+    server: str = ALBION_SERVER, quantity: int = Query(1, ge=1),
+    min_spread_percent: float | None = Query(None, ge=0), min_roi: float | None = Query(None, ge=0),
+    min_profit: float | None = Query(None, ge=0), sort: str = "roi", limit: int = Query(20, ge=1, le=100),
+    configured: bool = False, selling_fee: float = Query(0.0, ge=0), transaction_tax: float = Query(0.0, ge=0),
+    transport_cost: float = Query(0.0, ge=0), purchase_fee: float = Query(0.0, ge=0), safety_buffer: float = Query(0.0, ge=0),
+    freshness_max_age_minutes: float = Query(30.0, ge=0),
+):
+    _validate_server(server)
+    try:
+        return {"server": server, "quality": quality, "quantity": quantity, "opportunities": ArbitrageService(database, server).opportunities(
+            item_id=item_id, quality=quality, quantity=quantity, min_spread_percent=min_spread_percent,
+            min_roi=min_roi, min_profit=min_profit, sort=sort, limit=limit,
+            cost_model=_cost_model(purchase_fee, selling_fee, transaction_tax, transport_cost, safety_buffer, configured),
+            freshness_max_age_minutes=freshness_max_age_minutes,
+        )}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/arbitrage/opportunities")
+def arbitrage_opportunities(
+    item_id: str | None = Query(None, min_length=1), quality: int = Query(1, ge=1),
+    server: str = ALBION_SERVER, quantity: int = Query(1, ge=1),
+    min_spread_percent: float | None = Query(None, ge=0), min_roi: float | None = Query(None, ge=0),
+    min_profit: float | None = Query(None, ge=0), sort: str = "roi", limit: int = Query(20, ge=1, le=100),
+    configured: bool = False, selling_fee: float = Query(0.0, ge=0), transaction_tax: float = Query(0.0, ge=0),
+    transport_cost: float = Query(0.0, ge=0), purchase_fee: float = Query(0.0, ge=0), safety_buffer: float = Query(0.0, ge=0),
+    freshness_max_age_minutes: float = Query(30.0, ge=0),
+):
+    return arbitrage(item_id=item_id, quality=quality, server=server, quantity=quantity,
+                     min_spread_percent=min_spread_percent, min_roi=min_roi, min_profit=min_profit,
+                     sort=sort, limit=limit, configured=configured, selling_fee=selling_fee,
+                     transaction_tax=transaction_tax, transport_cost=transport_cost, purchase_fee=purchase_fee,
+                     safety_buffer=safety_buffer, freshness_max_age_minutes=freshness_max_age_minutes)
+
+
+@app.get("/api/arbitrage/calculate")
+def arbitrage_calculate(
+    buy_price: float = Query(..., gt=0), sell_price: float = Query(..., gt=0), quantity: int = Query(1, ge=1),
+    server: str = ALBION_SERVER, configured: bool = False, selling_fee: float = Query(0.0, ge=0),
+    transaction_tax: float = Query(0.0, ge=0), transport_cost: float = Query(0.0, ge=0), purchase_fee: float = Query(0.0, ge=0), safety_buffer: float = Query(0.0, ge=0),
+):
+    _validate_server(server)
+    try:
+        return ArbitrageService(database, server).calculate(
+            buy_price, sell_price, quantity,
+            _cost_model(purchase_fee, selling_fee, transaction_tax, transport_cost, safety_buffer, configured),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
