@@ -45,9 +45,14 @@ export const api = {
   async itemMarket({ itemId, server, quality = 1 }) {
     return request(`/api/items/${encodeURIComponent(itemId)}/market?server=${encodeURIComponent(server)}&quality=${quality}`);
   },
-  async itemHistory({ itemId, server, quality = 1, city = '' }) {
+  async itemHistory({ itemId, server, quality = 1, city = '', range = '7d' }) {
     const q = new URLSearchParams({ server, quality: String(quality) });
     if (city) q.set('city', city);
+    const days = { '1d': 1, '7d': 7, '30d': 30, '90d': 90 }[range] || 7;
+    const end = new Date();
+    const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+    q.set('start', start.toISOString());
+    q.set('end', end.toISOString());
     return request(`/api/items/${encodeURIComponent(itemId)}/history?${q}`);
   },
   async itemOpportunities({ itemId, server, limit = 20 }) {
