@@ -18,6 +18,19 @@ AODP_NATS_PORTS = {
     "west": 4222,
     "europe": 34222,
 }
+# AODP MarketOrder.LocationId is a numeric Albion location identifier on the
+# live deduped subject. Keep the normalized city names aligned with the REST
+# API's market-price city names. Unknown IDs remain unchanged rather than being
+# guessed.
+AODP_LOCATION_NAMES = {
+    "0": "Thetford",
+    "1000": "Lymhurst",
+    "2000": "Bridgewatch",
+    "3003": "Black Market",
+    "3004": "Martlock",
+    "3005": "Caerleon",
+    "4000": "Fort Sterling",
+}
 AODP_NATS_HOST = os.getenv("AODP_NATS_HOST", "nats.albion-online-data.com")
 AODP_NATS_SUBJECT = os.getenv("AODP_NATS_SUBJECT", "marketorders.deduped")
 AODP_NATS_ENABLED = os.getenv("AODP_NATS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
