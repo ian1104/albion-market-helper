@@ -51,7 +51,7 @@ def test_nats_persistence_liquidity_to_arbitrage_integration(tmp_path):
             },
             {
                 "Id": 1002,
-                "ItemTypeId": "Caerleon",
+                "ItemTypeId": "T4_BAG",
                 "LocationId": "Caerleon",
                 "QualityLevel": 1,
                 "UnitPriceSilver": 12000,
@@ -60,9 +60,6 @@ def test_nats_persistence_liquidity_to_arbitrage_integration(tmp_path):
             },
         ]
     }
-    # Correct the fixture item identifier explicitly; keeping this local avoids
-    # hiding identifier mismatches in the integration assertions.
-    payload["Orders"][1]["ItemTypeId"] = "T4_BAG"
 
     consumer = AODPNatsConsumer(
         AODPNatsAdapter(), db, server="east", nats_url="nats://fixture", subject="marketorders.deduped"
