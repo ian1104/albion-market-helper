@@ -39,3 +39,13 @@ Arbitrage responses include gross opportunity fields plus liquidity, executable 
 ## Development validation
 
 Python tests use fixtures/mocks and do not insert synthetic market data into the production database. Live AODP connectivity is tested separately from parser and engine tests.
+
+## Phase 6: External liquidity source
+
+The selected external liquidity source is the Albion Online Data Project (AODP) public NATS market-order stream, `marketorders.deduped`. AODP documents public NATS endpoints for Americas/West, Asia/East, and Europe. Its market-order messages contain individual orders including item, location, quality, unit price, amount, auction type, order ID, and expiry.
+
+The project normalizes those messages through `MarketDataAdapter` / `AODPNatsAdapter` and persists them as provenance-aware `market_liquidity_orders` records. `DatabaseLiquidityProvider` converts real sell offers and buy requests into execution depth for the existing arbitrage engine. No quantity, volume, or order depth is inferred from AODP price snapshots.
+
+AODP market-order data is observational rather than a guaranteed complete order book: the AODP client uploads orders that users actually load in-game, and subscribers can miss earlier messages. Therefore liquidity is only treated as available when recent normalized order data exists; otherwise it remains unavailable.
+
+NATS ingestion is opt-in through `AODP_NATS_ENABLED`. The adapter and tests are network-independent; live NATS access is validated separately.
