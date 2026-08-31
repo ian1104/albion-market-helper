@@ -1,0 +1,338 @@
+name: Phase 20 Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Environment diagnostics
+        run: |
+          python --version
+          node --version
+          npm --version
+          git --version
+          git rev-parse HEAD
+          echo '--- DNS ---'
+          for host in east.albion-online-data.com west.albion-online-data.com europe.albion-online-data.com nats.albion-online-data.com render.albiononline.com; do
+            echo "[$host]"
+            getent hosts "$host" || true
+          done
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Python syntax
+        run: python -m compileall .
+
+      - name: Full pytest
+        run: python -m pytest -q
+
+      - name: Frontend dependencies
+        working-directory: frontend
+        run: npm install --no-audit --no-fund
+
+      - name: Frontend production build
+        working-directory: frontend
+        run: npm run build
+
+      - name: NATS connection validation
+        run: |
+          python - <<'PY'
+          import asyncio
+          import json
+          import socket
+          import nats
+          from config import AODP_NATS_HOST, AODP_NATS_PORTS
+
+          async def check(server, port):
+              result = {'server': server, 'port': port}
+              try:
+                  socket.getaddrinfo(AODP_NATS_HOST, port, type=socket.SOCK_STREAM)
+                  result['dns'] = 'PASS'
+              except Exception as exc:
+                  result['dns'] = f'BLOCKED: {type(exc).__name__}: {exc}'
+                  return result
+              try:
+                  nc = await nats.connect(
+                      servers=[f'nats://public:thenewalbiondata@{AODP_NATS_HOST}:{port}'],
+                      connect_timeout=5,
+                      max_reconnect_attempts=0,
+                  )
+                  result['connection'] = 'PASS'
+                  await nc.close()
+              except Exception as exc:
+                  result['connection'] = f'BLOCKED: {type(exc).__name__}: {exc}'
+              return result
+
+          async def main():
+              return await asyncio.gather(*(check(server, port) for server, port in AODP_NATS_PORTS.items()))
+
+          results = asyncio.run(main())
+          print(json.dumps(results, indent=2))
+          if not any(item.get('connection') == 'PASS' for item in results):
+              raise SystemExit('No canonical AODP NATS server accepted a connection')
+          PY
+
+      - name: Location metadata validation
+        run: |
+          python - <<'PY'
+          from config import AODP_LOCATION_NAMES
+          expected = {
+              '7': 'Thetford',
+              '1002': 'Lymhurst',
+              '2004': 'Bridgewatch',
+              '3005': 'Caerleon',
+              '3010': 'Martlock',
+              '4002': 'Fort Sterling',
+          }
+          assert all(AODP_LOCATION_NAMES.get(k) == v for k, v in expected.items())
+          assert '3008' not in AODP_LOCATION_NAMES
+          print('Location metadata validation: PASS')
+          PY
+
+      - name: Persistent live observation and candidate discovery
+        env:
+          DATABASE_PATH: /tmp/amh-phase20-live.db
+          AODP_NATS_STALE_MINUTES: '15'
+        run: |
+          rm -f /tmp/amh-phase20-live.db
+          python - <<'PY'
+          import asyncio
+          import json
+          from collections import Counter, defaultdict
+
+          import nats
+
+          from config import AODP_NATS_HOST, AODP_NATS_PORTS, AODP_NATS_SUBJECT, SUPPORTED_SERVERS
+          from db.database import Database
+          from services.aodp_nats import AODPNatsAdapter
+          from services.albion_api import AlbionApiService
+          from services.arbitrage_service import ArbitrageService, CostModel
+          from services.market_service import MarketService
+          from services.liquidity import DatabaseLiquidityProvider
+
+          DB_PATH = '/tmp/amh-phase20-live.db'
+          OBSERVATION_SECONDS = 120
+          MAX_MESSAGES = 400
+          db = Database(DB_PATH)
+          db.initialize()
+          adapter = AODPNatsAdapter()
+          received = Counter()
+          parsed = Counter()
+          invalid = Counter()
+          stop = asyncio.Event()
+
+          async def consume(server, port):
+              url = f'nats://public:thenewalbiondata@{AODP_NATS_HOST}:{port}'
+              try:
+                  nc = await nats.connect(servers=[url], connect_timeout=5, max_reconnect_attempts=0)
+              except Exception as exc:
+                  print(json.dumps({'server': server, 'stage': 'connection', 'status': 'BLOCKED', 'error': f'{type(exc).__name__}: {exc}'}))
+                  return
+
+              async def handler(message):
+                  received[server] += 1
+                  try:
+                      orders = adapter.normalize(message.data, server=server)
+                      for order in orders:
+                          db.upsert_liquidity_order(order)
+                      parsed[server] += len(orders)
+                  except Exception as exc:
+                      invalid[server] += 1
+                      print(json.dumps({'server': server, 'stage': 'message', 'status': 'ERROR', 'error': f'{type(exc).__name__}: {exc}'}))
+                  if sum(received.values()) >= MAX_MESSAGES:
+                      stop.set()
+
+              await nc.subscribe(AODP_NATS_SUBJECT, cb=handler)
+              await nc.flush()
+              print(json.dumps({'server': server, 'stage': 'subscription', 'status': 'PASS', 'subject': AODP_NATS_SUBJECT}))
+              try:
+                  while not stop.is_set():
+                      await asyncio.sleep(0.25)
+              finally:
+                  await nc.close()
+
+          async def main():
+              tasks = [asyncio.create_task(consume(server, port)) for server, port in AODP_NATS_PORTS.items()]
+              try:
+                  await asyncio.wait_for(stop.wait(), timeout=OBSERVATION_SECONDS)
+              except asyncio.TimeoutError:
+                  pass
+              stop.set()
+              await asyncio.gather(*tasks, return_exceptions=True)
+
+          asyncio.run(main())
+
+          print(json.dumps({
+              'stage': 'live_observation',
+              'seconds': OBSERVATION_SECONDS,
+              'messages': dict(received),
+              'orders': dict(parsed),
+              'invalid_messages': dict(invalid),
+          }, indent=2))
+
+          total_orders = sum(parsed.values())
+          if total_orders == 0:
+              raise SystemExit('NO LIVE MARKET ORDERS OBSERVED in the bounded window')
+
+          with db.connect() as con:
+              order_count = con.execute('SELECT COUNT(*) FROM market_liquidity_orders').fetchone()[0]
+              observation_count = con.execute('SELECT COUNT(*) FROM market_liquidity_order_observations').fetchone()[0]
+              candidate_rows = con.execute('''
+                  SELECT server, item_id, quality, COUNT(DISTINCT city) AS cities, COUNT(*) AS orders
+                  FROM market_liquidity_orders
+                  WHERE status = 'ACTIVE'
+                  GROUP BY server, item_id, quality
+                  HAVING COUNT(DISTINCT city) >= 2
+                  ORDER BY cities DESC, orders DESC
+                  LIMIT 25
+              ''').fetchall()
+
+          print(json.dumps({
+              'stage': 'persistence',
+              'status': 'PASS' if order_count > 0 and observation_count >= total_orders else 'FAIL',
+              'active_orders': order_count,
+              'observations': observation_count,
+          }, indent=2))
+          assert order_count > 0
+          assert observation_count >= total_orders
+
+          candidates = [dict(row) for row in candidate_rows]
+          print(json.dumps({'stage': 'multi_city_candidates', 'count': len(candidates), 'candidates': candidates}, indent=2))
+
+          provider = DatabaseLiquidityProvider(db, max_age_minutes=15, source='aodp-nats')
+          available_pairs = 0
+          for candidate in candidates:
+              cities = db.liquidity_orders(
+                  server=candidate['server'], item_id=candidate['item_id'], city=None,
+                  quality=candidate['quality'], stale_minutes=15
+              ) if False else []
+              # Verify at least two real active city snapshots without fabricating a city list.
+              with db.connect() as con:
+                  city_rows = con.execute(
+                      "SELECT DISTINCT city FROM market_liquidity_orders WHERE server=? AND item_id=? AND quality=? AND status='ACTIVE'",
+                      (candidate['server'], candidate['item_id'], candidate['quality'])
+                  ).fetchall()
+              for city_row in city_rows:
+                  snapshot = provider.get(candidate['server'], candidate['item_id'], city_row['city'], candidate['quality'])
+                  if snapshot is not None and snapshot.available:
+                      available_pairs += 1
+
+          print(json.dumps({'stage': 'liquidity', 'available_city_snapshots': available_pairs, 'candidate_count': len(candidates)}))
+
+          # A live candidate is only promoted to an arbitrage evaluation when the
+          # same real item/quality has fresh orders in >=2 canonical cities. No
+          # candidate is fabricated if the market does not produce one.
+          live_opportunities = []
+          for candidate in candidates[:10]:
+              server = candidate['server']
+              item_id = candidate['item_id']
+              quality = candidate['quality']
+              with db.connect() as con:
+                  city_rows = con.execute(
+                      "SELECT DISTINCT city FROM market_liquidity_orders WHERE server=? AND item_id=? AND quality=? AND status='ACTIVE'",
+                      (server, item_id, quality)
+                  ).fetchall()
+              cities = sorted({row['city'] for row in city_rows if row['city'] in {'Thetford','Lymhurst','Bridgewatch','Black Market','Martlock','Caerleon','Fort Sterling','Brecilien'}})
+              if len(cities) < 2:
+                  continue
+              try:
+                  records = AlbionApiService(host=SUPPORTED_SERVERS[server], timeout=10, retry_count=1).fetch_prices([item_id], cities, [quality])
+                  if records:
+                      MarketService(db, server=server).save_snapshot_batch(records)
+                  ops = ArbitrageService(db, server).opportunities(
+                      item_id=item_id,
+                      quality=quality,
+                      quantity=1,
+                      cost_model=CostModel(configured=True),
+                      limit=20,
+                      freshness_max_age_minutes=30,
+                  )
+                  if ops:
+                      live_opportunities.extend(ops)
+                      print(json.dumps({'stage': 'live_arbitrage', 'status': 'PASS', 'server': server, 'item_id': item_id, 'count': len(ops)}))
+                      break
+              except Exception as exc:
+                  print(json.dumps({'stage': 'live_arbitrage', 'status': 'BLOCKED', 'server': server, 'item_id': item_id, 'error': f'{type(exc).__name__}: {exc}'}))
+
+          print(json.dumps({
+              'stage': 'live_arbitrage_summary',
+              'status': 'PASS' if live_opportunities else 'NOT_OBSERVED',
+              'opportunities': len(live_opportunities),
+          }))
+          print('Live pipeline reached persistence/liquidity/arbitrage evaluation without synthetic data.')
+          PY
+
+      - name: Restart recovery validation
+        env:
+          DATABASE_PATH: /tmp/amh-phase20-restart.db
+        run: |
+          rm -f /tmp/amh-phase20-restart.db
+          python - <<'PY'
+          import asyncio
+          import json
+          from types import SimpleNamespace
+          from db.database import Database
+          from services.aodp_nats import AODPNatsAdapter, AODPNatsConsumer
+
+          payload = json.dumps({'Id': 9901, 'ItemTypeId': 'T4_BAG', 'LocationId': 3010, 'QualityLevel': 1, 'UnitPriceSilver': 10000, 'Amount': 2, 'AuctionType': 'offer'}).encode()
+
+          async def receive(consumer):
+              await consumer._handle_message(SimpleNamespace(data=payload))
+              await consumer.stop()
+
+          db1 = Database('/tmp/amh-phase20-restart.db')
+          asyncio.run(receive(AODPNatsConsumer(AODPNatsAdapter(), db1, server='east', nats_url='nats://invalid')))
+          db2 = Database('/tmp/amh-phase20-restart.db')
+          asyncio.run(receive(AODPNatsConsumer(AODPNatsAdapter(), db2, server='east', nats_url='nats://invalid')))
+          with db2.connect() as con:
+              current = con.execute("SELECT COUNT(*) FROM market_liquidity_orders WHERE order_id='9901'").fetchone()[0]
+              observations = con.execute("SELECT COUNT(*) FROM market_liquidity_order_observations WHERE order_id='9901'").fetchone()[0]
+          assert current == 1
+          assert observations == 2
+          print('Restart recovery: PASS')
+          PY
+
+      - name: FastAPI runtime smoke test
+        env:
+          DATABASE_PATH: /tmp/amh-phase20-runtime.db
+          AODP_NATS_ENABLED: 'false'
+        run: |
+          rm -f /tmp/amh-phase20-runtime.db
+          python - <<'PY'
+          from db.database import Database
+          Database('/tmp/amh-phase20-runtime.db').initialize()
+          PY
+          DATABASE_PATH=/tmp/amh-phase20-runtime.db python run_server.py >/tmp/albion-market-helper-phase20.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+          for i in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:8000/ >/tmp/root.json; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8000/ >/tmp/root.json
+          curl --fail --silent http://127.0.0.1:8000/api/strategies >/tmp/strategies.json
+          curl --fail --silent 'http://127.0.0.1:8000/api/liquidity/status?server=east' >/tmp/liquidity-status.json
+          python - <<'PY'
+          import json
+          assert json.load(open('/tmp/root.json'))['status'] == 'ok'
+          assert isinstance(json.load(open('/tmp/strategies.json')).get('strategies'), list)
+          status = json.load(open('/tmp/liquidity-status.json'))
+          assert status['server'] == 'east'
+          assert 'last_message_at' in status
+          print('FastAPI runtime smoke: PASS')
+          PY

@@ -18,19 +18,27 @@ AODP_NATS_PORTS = {
     "west": 4222,
     "europe": 34222,
 }
-# AODP MarketOrder.LocationId is a numeric Albion location identifier on the
-# live deduped subject. Keep the normalized city names aligned with the REST
-# API's market-price city names. Unknown IDs remain unchanged rather than being
-# guessed.
+# AODP MarketOrder.LocationId values are marketplace identifiers, not the
+# numeric zone IDs used by the world map. These values are the canonical
+# market-location IDs used by the Albion Data ecosystem and match the live
+# IDs observed on marketorders.deduped. Unknown IDs remain numeric instead of
+# being guessed.
+#
+# Source: albiondata-sql Location enum (public historical implementation),
+# corroborated by the current AODP live payloads observed in Phase 18/19.
+# Source metadata is kept below so a future world-metadata refresh can replace
+# this static compatibility map without changing the adapter API.
 AODP_LOCATION_NAMES = {
-    "0": "Thetford",
-    "1000": "Lymhurst",
-    "2000": "Bridgewatch",
+    "7": "Thetford",
+    "1002": "Lymhurst",
+    "2004": "Bridgewatch",
     "3003": "Black Market",
-    "3004": "Martlock",
     "3005": "Caerleon",
-    "4000": "Fort Sterling",
+    "3010": "Martlock",
+    "4002": "Fort Sterling",
 }
+AODP_LOCATION_METADATA_SOURCE = "albiondata-sql Location enum + live AODP payload corroboration"
+AODP_LOCATION_METADATA_VERSION = "market-location-ids-2026-09"
 AODP_NATS_HOST = os.getenv("AODP_NATS_HOST", "nats.albion-online-data.com")
 AODP_NATS_SUBJECT = os.getenv("AODP_NATS_SUBJECT", "marketorders.deduped")
 AODP_NATS_ENABLED = os.getenv("AODP_NATS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}

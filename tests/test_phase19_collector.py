@@ -11,7 +11,7 @@ def payload():
         "Orders": [{
             "Id": 101,
             "ItemTypeId": "T4_BAG",
-            "LocationId": 3004,
+            "LocationId": 3010,
             "QualityLevel": 1,
             "UnitPriceSilver": 9000,
             "Amount": 4,
