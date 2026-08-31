@@ -144,75 +144,50 @@ class ArbitrageStrategy:
             provider = getattr(service, "liquidity_provider", None)
             service = type(service)(service.database, requested_server, provider)
         opportunities = service.opportunities(
-            item_id=inputs.get("item_id"),
-            quality=inputs.get("quality", 1),
-            quantity=inputs.get("quantity", 1),
-            min_spread_percent=inputs.get("min_spread_percent"),
-            min_roi=inputs.get("min_roi"),
-            min_profit=inputs.get("min_profit"),
-            sort=inputs.get("source_sort", "roi"),
-            limit=inputs.get("source_limit", 100),
-            cost_model=inputs.get("cost_model"),
+            item_id=inputs.get("item_id"), quality=inputs.get("quality", 1), quantity=inputs.get("quantity", 1),
+            min_spread_percent=inputs.get("min_spread_percent"), min_roi=inputs.get("min_roi"), min_profit=inputs.get("min_profit"),
+            sort=inputs.get("source_sort", "roi"), limit=inputs.get("source_limit", 100), cost_model=inputs.get("cost_model"),
             freshness_max_age_minutes=inputs.get("freshness_max_age_minutes", 30.0),
-            historical_range_start=inputs.get("historical_range_start"),
-            historical_range_end=inputs.get("historical_range_end"),
+            historical_range_start=inputs.get("historical_range_start"), historical_range_end=inputs.get("historical_range_end"),
         )
         capital = inputs.get("capital")
         result: list[BusinessOpportunity] = []
         for opportunity in opportunities:
-            buy = opportunity["buy"]
-            sell = opportunity["sell"]
-            realistic = opportunity["realistic_profit"]
-            executable = opportunity["liquidity"].get("executable_quantity")
-            quantity = opportunity["liquidity"].get("requested_quantity")
+            buy = opportunity["buy"]; sell = opportunity["sell"]; realistic = opportunity["realistic_profit"]
+            executable = opportunity["liquidity"].get("executable_quantity"); quantity = opportunity["liquidity"].get("requested_quantity")
             execution_price = realistic.get("buy_execution_price")
             required_capital = (execution_price if execution_price is not None else buy["price"]) * (executable if executable is not None else quantity)
             profit = realistic.get("net_profit") if realistic.get("status") == "available" else opportunity["profit"].get("estimated_net_profit")
-            revenue = None
-            cost = None
+            revenue = cost = None
             if realistic.get("status") == "available":
-                qty = realistic.get("quantity")
-                revenue = realistic.get("sell_execution_price") * qty
-                cost = realistic.get("buy_execution_price") * qty
+                qty = realistic.get("quantity"); revenue = realistic.get("sell_execution_price") * qty; cost = realistic.get("buy_execution_price") * qty
             elif opportunity["profit"].get("estimated_net_profit") is not None:
-                qty = quantity
-                revenue = sell["price"] * qty
-                cost = buy["price"] * qty
+                qty = quantity; revenue = sell["price"] * qty; cost = buy["price"] * qty
             utilization = None if capital is None or capital <= 0 else required_capital / capital * 100.0
             liquidity_status = "available" if opportunity["liquidity"]["buy"]["status"] == "available" and opportunity["liquidity"]["sell"]["status"] == "available" else "unavailable"
             result.append(BusinessOpportunity(
-                strategy_id="arbitrage",
-                title=f"{opportunity['item_id']}: {buy['city']} → {sell['city']}",
-                server=opportunity["server"],
-                location=f"{buy['city']} → {sell['city']}",
-                required_capital=required_capital,
-                available_capital=capital,
-                capital_utilization_percent=utilization,
-                required_quantity=quantity,
-                executable_quantity=executable,
-                expected_revenue=revenue,
-                expected_cost=cost,
-                expected_profit=profit,
+                strategy_id="arbitrage", title=f"{opportunity['item_id']}: {buy['city']} → {sell['city']}", server=opportunity["server"],
+                location=f"{buy['city']} → {sell['city']}", required_capital=required_capital, available_capital=capital,
+                capital_utilization_percent=utilization, required_quantity=quantity, executable_quantity=executable,
+                expected_revenue=revenue, expected_cost=cost, expected_profit=profit,
                 roi_percent=realistic.get("roi_percent") if realistic.get("status") == "available" else opportunity["profit"].get("roi_percent"),
-                risk=self.definition.risk_level,
-                liquidity=liquidity_status,
-                confidence=opportunity.get("confidence", "UNAVAILABLE"),
-                freshness=opportunity.get("data", {}).get("freshness", "unknown"),
-                time_required=self.definition.time_horizon,
+                risk=self.definition.risk_level, liquidity=liquidity_status, confidence=opportunity.get("confidence", "UNAVAILABLE"),
+                freshness=opportunity.get("data", {}).get("freshness", "unknown"), time_required=self.definition.time_horizon,
                 explanation="Existing ArbitrageService result adapted to the strategy-neutral opportunity contract.",
             ))
         return result
 
 
 def default_strategy_registry(arbitrage_service: Any | None = None, database: Any | None = None) -> StrategyRegistry:
-    """Build the registry with definitions for all planned strategies and executable implementations when dependencies exist."""
-
+    """Build strategy definitions and executable implementations when dependencies exist."""
     registry = StrategyRegistry()
     registry.register_definition(ArbitrageStrategy.definition)
     from services.crafting_strategy import CraftingStrategy
     registry.register_definition(CraftingStrategy.definition)
     if arbitrage_service is not None:
         registry.register(ArbitrageStrategy(arbitrage_service))
+        if database is None:
+            database = getattr(arbitrage_service, "database", None)
     if database is not None:
         registry.register(CraftingStrategy(database))
     return registry
