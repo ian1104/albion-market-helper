@@ -54,29 +54,12 @@ function CityTable({ cities, onSelect, selectedCity }) {
   return <div className="market-table-wrap"><table className="market-table"><thead><tr><th>도시</th><th>최저 판매가</th><th>최고 구매가</th><th>관측 시각</th></tr></thead><tbody>{cities.map(row => <tr key={`${row.city}-${row.quality}`} className={row.city === selectedCity ? 'selected' : ''} onClick={() => onSelect(row.city)}><td>{row.city}</td><td>{money(row.sell_price_min)}</td><td>{money(row.buy_price_max)}</td><td>{text(row.updated_at, '—')}</td></tr>)}</tbody></table></div>;
 }
 
-export default function Market({ server }) {
+export default function Market({ server, initialItemId = '' }) {
   const [selected, setSelected] = useState(null);
   const [quality, setQuality] = useState(1);
   const [city, setCity] = useState('');
   const [detail, setDetail] = useState({ metadata: null, cities: [], history: [], opportunities: [], analysis: null, error: '', loading: false });
   const [range, setRange] = useState('7d');
-
-  async function selectItem(item) {
-    setSelected(item); setCity(''); setDetail(d => ({ ...d, loading: true, error: '' }));
-    try {
-      const [metadataResponse, marketResponse, opportunityResponse] = await Promise.all([
-        api.item(item.item_id), api.itemMarket({ itemId: item.item_id, server, quality }), api.itemOpportunities({ itemId: item.item_id, server }),
-      ]);
-      const cities = marketResponse.cities || [];
-      const firstCity = cities[0]?.city || '';
-      const historyResponse = firstCity ? await api.itemHistory({ itemId: item.item_id, server, quality, city: firstCity, range }) : { history: [] };
-      setCity(firstCity);
-      setDetail({ metadata: metadataResponse.item, cities, history: historyResponse.history || [], opportunities: opportunityResponse.opportunities || [], analysis: null, error: '', loading: false });
-      if (firstCity) await loadCityAnalysis(item.item_id, firstCity, quality, cities, metadataResponse.item, opportunityResponse.opportunities || [], range);
-    } catch (e) {
-      setDetail({ metadata: item, cities: [], history: [], opportunities: [], analysis: null, error: e.message || '시장 데이터를 불러오지 못했습니다.', loading: false });
-    }
-  }
 
   async function loadCityAnalysis(itemId, nextCity, nextQuality = quality, cities = detail.cities, metadata = detail.metadata, opportunities = detail.opportunities, nextRange = range) {
     if (!nextCity) return;
@@ -92,6 +75,33 @@ export default function Market({ server }) {
       setDetail(d => ({ ...d, loading: false, error: e.message || '선택한 도시의 데이터를 불러오지 못했습니다.' }));
     }
   }
+
+  async function selectItem(item) {
+    setSelected(item); setCity(''); setDetail(d => ({ ...d, loading: true, error: '' }));
+    try {
+      const [metadataResponse, marketResponse, opportunityResponse] = await Promise.all([
+        api.item(item.item_id), api.itemMarket({ itemId: item.item_id, server, quality }), api.itemOpportunities({ itemId: item.item_id, server }),
+      ]);
+      const cities = marketResponse.cities || [];
+      const firstCity = cities[0]?.city || '';
+      const metadata = metadataResponse.item;
+      const opportunities = opportunityResponse.opportunities || [];
+      const historyResponse = firstCity ? await api.itemHistory({ itemId: item.item_id, server, quality, city: firstCity, range }) : { history: [] };
+      setCity(firstCity);
+      setDetail({ metadata, cities, history: historyResponse.history || [], opportunities, analysis: null, error: '', loading: false });
+      if (firstCity) await loadCityAnalysis(item.item_id, firstCity, quality, cities, metadata, opportunities, range);
+    } catch (e) {
+      setDetail({ metadata: item, cities: [], history: [], opportunities: [], analysis: null, error: e.message || '시장 데이터를 불러오지 못했습니다.', loading: false });
+    }
+  }
+
+  useEffect(() => {
+    if (!initialItemId) return;
+    let active = true;
+    api.item(initialItemId).then(response => { if (active) selectItem(response.item); }).catch(() => {});
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialItemId, server]);
 
   useEffect(() => {
     if (!selected || !city) return;
