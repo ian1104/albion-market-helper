@@ -47,13 +47,16 @@ jobs:
           DATABASE_PATH=/tmp/amh-phase17.db python - <<'PY'
           import sqlite3
           from db.database import Database
+          from services.recipe_data import RecipeRepository
           db = Database('/tmp/amh-phase17.db')
           db.initialize()
+          RecipeRepository(db)
           with sqlite3.connect('/tmp/amh-phase17.db') as con:
               tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
           required = {
               'market_prices', 'market_price_history', 'collection_runs',
-              'market_liquidity_orders', 'market_liquidity_order_observations'
+              'market_liquidity_orders', 'market_liquidity_order_observations',
+              'recipe_items', 'recipes', 'recipe_materials'
           }
           missing = required - tables
           assert not missing, missing
