@@ -156,7 +156,10 @@ class Database:
                     ON CONFLICT(source,server,order_id) DO UPDATE SET
                     item_id=excluded.item_id, city=excluded.city, quality=excluded.quality, side=excluded.side,
                     price=excluded.price, quantity=excluded.quantity, expires_at=excluded.expires_at,
-                    observed_at=excluded.observed_at, last_seen=excluded.last_seen, status='ACTIVE',
+                    observed_at=CASE WHEN excluded.observed_at > market_liquidity_orders.observed_at THEN excluded.observed_at ELSE market_liquidity_orders.observed_at END,
+                    last_seen=CASE WHEN excluded.last_seen > market_liquidity_orders.last_seen THEN excluded.last_seen ELSE market_liquidity_orders.last_seen END,
+                    first_seen=CASE WHEN market_liquidity_orders.first_seen IS NULL OR excluded.first_seen < market_liquidity_orders.first_seen THEN excluded.first_seen ELSE market_liquidity_orders.first_seen END,
+                    status='ACTIVE',
                     source_timestamp=excluded.source_timestamp""",
                     (*values[:11], order.observed_at, order.observed_at, 'ACTIVE', order.source_timestamp))
             else:
