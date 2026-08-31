@@ -270,6 +270,7 @@ def liquidity_status(server: str = ALBION_SERVER) -> dict[str, Any]:
         "orders_saved": consumer.orders_saved if consumer else 0,
         "invalid_messages": consumer.invalid_messages if consumer else 0,
         "connection_attempts": consumer.connection_attempts if consumer else 0,
+        "last_message_at": consumer.last_message_at if consumer else None,
         "order_counts": counts,
         "stale_minutes": AODP_NATS_STALE_MINUTES,
     }
@@ -396,8 +397,8 @@ def opportunities(
     configured: bool = False,
     selling_fee: float = Query(0.0, ge=0),
     transaction_tax: float = Query(0.0, ge=0),
-    transport_cost: float = Query(0.0, ge=0),
     purchase_fee: float = Query(0.0, ge=0),
+    transport_cost: float = Query(0.0, ge=0),
     safety_buffer: float = Query(0.0, ge=0),
     freshness_max_age_minutes: float = Query(30.0, ge=0),
 ) -> dict[str, Any]:
