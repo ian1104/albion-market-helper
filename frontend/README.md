@@ -1,3 +1,3 @@
 # Frontend
 
-Frontend scaffold for Albion Market Helper.
+Frontend implementation for Albion Market Helper.
