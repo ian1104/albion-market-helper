@@ -14,12 +14,7 @@ class RiskLevel(StrEnum):
 
 @dataclass(frozen=True)
 class StrategyDefinition:
-    """Metadata contract for a business strategy.
-
-    Definitions describe what a strategy needs and what it produces. They do
-    not contain market-source-specific code. A calculator can be attached by
-    a registry key and implemented independently from the API layer.
-    """
+    """Metadata contract for an independently executable business strategy."""
 
     strategy_id: str
     name: str
@@ -50,13 +45,15 @@ class StrategyDefinition:
 
 @dataclass(frozen=True)
 class BusinessOpportunity:
-    """Strategy-neutral output contract for future dashboard comparison."""
+    """Strategy-neutral result contract used by the dashboard/application layer."""
 
     strategy_id: str
     title: str
     server: str
     location: str | None = None
     required_capital: float | None = None
+    available_capital: float | None = None
+    capital_utilization_percent: float | None = None
     required_quantity: float | None = None
     executable_quantity: float | None = None
     expected_revenue: float | None = None
@@ -87,7 +84,7 @@ class BusinessStrategy(Protocol):
 
 @dataclass
 class StrategyRegistry:
-    """Registry for independently addable strategy definitions/calculators."""
+    """Registry for independently addable strategy implementations."""
 
     _definitions: dict[str, StrategyDefinition] = field(default_factory=dict)
     _strategies: dict[str, BusinessStrategy] = field(default_factory=dict)
@@ -114,31 +111,100 @@ class StrategyRegistry:
     def definitions(self) -> tuple[StrategyDefinition, ...]:
         return tuple(self._definitions[key] for key in sorted(self._definitions))
 
+    def strategies(self) -> tuple[BusinessStrategy, ...]:
+        return tuple(self._strategies[key] for key in sorted(self._strategies))
+
     def to_dicts(self) -> list[dict[str, Any]]:
         return [definition.to_dict() for definition in self.definitions()]
 
 
-def default_strategy_registry() -> StrategyRegistry:
-    """Create the metadata registry without coupling strategies to FastAPI.
+class ArbitrageStrategy:
+    """Strategy adapter that delegates all arbitrage calculations to ArbitrageService."""
 
-    Arbitrage is registered as an existing capability. Its calculation remains
-    in ArbitrageService; this registry only provides a strategy-neutral
-    discovery boundary for future crafting, refining, transport, and trading
-    modules.
-    """
+    definition = StrategyDefinition(
+        strategy_id="arbitrage",
+        name="City Arbitrage",
+        description="Compare city prices and estimate executable cross-city trading opportunities.",
+        required_data=("market_prices", "historical_analysis", "liquidity"),
+        input_parameters=("server", "item_id", "quality", "quantity", "cost_model", "capital"),
+        calculator_key="arbitrage_service",
+        risk_level=RiskLevel.MEDIUM,
+        liquidity_requirement="recent_order_data",
+        time_horizon="short",
+    )
+
+    def __init__(self, arbitrage_service: Any):
+        self._service = arbitrage_service
+
+    def evaluate(self, **inputs: Any) -> list[BusinessOpportunity]:
+        opportunities = self._service.opportunities(
+            item_id=inputs.get("item_id"),
+            quality=inputs.get("quality", 1),
+            quantity=inputs.get("quantity", 1),
+            min_spread_percent=inputs.get("min_spread_percent"),
+            min_roi=inputs.get("min_roi"),
+            min_profit=inputs.get("min_profit"),
+            sort=inputs.get("source_sort", "roi"),
+            limit=inputs.get("source_limit", 100),
+            cost_model=inputs.get("cost_model"),
+            freshness_max_age_minutes=inputs.get("freshness_max_age_minutes"),
+            historical_range_start=inputs.get("historical_range_start"),
+            historical_range_end=inputs.get("historical_range_end"),
+        )
+        capital = inputs.get("capital")
+        result: list[BusinessOpportunity] = []
+        for opportunity in opportunities:
+            buy = opportunity["buy"]
+            sell = opportunity["sell"]
+            realistic = opportunity["realistic_profit"]
+            executable = opportunity["liquidity"].get("executable_quantity")
+            quantity = opportunity["liquidity"].get("requested_quantity")
+            execution_price = realistic.get("buy_execution_price")
+            required_capital = (execution_price if execution_price is not None else buy["price"]) * (executable if executable is not None else quantity)
+            profit = realistic.get("net_profit") if realistic.get("status") == "available" else opportunity["profit"].get("estimated_net_profit")
+            revenue = None
+            cost = None
+            if realistic.get("status") == "available":
+                qty = realistic.get("quantity")
+                revenue = realistic.get("sell_execution_price") * qty
+                cost = realistic.get("buy_execution_price") * qty
+            elif opportunity["profit"].get("estimated_net_profit") is not None:
+                qty = quantity
+                revenue = sell["price"] * qty
+                cost = buy["price"] * qty
+            utilization = None if capital is None or capital <= 0 else required_capital / capital * 100.0
+            liquidity_status = "available" if opportunity["liquidity"]["buy"]["status"] == "available" and opportunity["liquidity"]["sell"]["status"] == "available" else "unavailable"
+            result.append(BusinessOpportunity(
+                strategy_id="arbitrage",
+                title=f"{opportunity['item_id']}: {buy['city']} → {sell['city']}",
+                server=opportunity["server"],
+                location=f"{buy['city']} → {sell['city']}",
+                required_capital=required_capital,
+                available_capital=capital,
+                capital_utilization_percent=utilization,
+                required_quantity=quantity,
+                executable_quantity=executable,
+                expected_revenue=revenue,
+                expected_cost=cost,
+                expected_profit=profit,
+                roi_percent=realistic.get("roi_percent") if realistic.get("status") == "available" else opportunity["profit"].get("roi_percent"),
+                risk=self.definition.risk_level,
+                liquidity=liquidity_status,
+                confidence=opportunity.get("confidence", "UNAVAILABLE"),
+                freshness=opportunity.get("data", {}).get("freshness", "unknown"),
+                time_required=self.definition.time_horizon,
+                explanation="Existing ArbitrageService result adapted to the strategy-neutral opportunity contract.",
+            ))
+        return result
+
+
+def default_strategy_registry(arbitrage_service: Any | None = None) -> StrategyRegistry:
+    """Build the registry; when a service is supplied, arbitrage is executable."""
 
     registry = StrategyRegistry()
-    registry.register_definition(
-        StrategyDefinition(
-            strategy_id="arbitrage",
-            name="City Arbitrage",
-            description="Compare city prices and estimate executable cross-city trading opportunities.",
-            required_data=("market_prices", "historical_analysis", "liquidity"),
-            input_parameters=("server", "item_id", "quality", "quantity", "cost_model"),
-            calculator_key="arbitrage_service",
-            risk_level=RiskLevel.MEDIUM,
-            liquidity_requirement="recent_order_data",
-            time_horizon="short",
-        )
-    )
+    strategy = ArbitrageStrategy(arbitrage_service) if arbitrage_service is not None else None
+    if strategy is not None:
+        registry.register(strategy)
+    else:
+        registry.register_definition(ArbitrageStrategy.definition)
     return registry
