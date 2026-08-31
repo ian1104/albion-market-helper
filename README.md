@@ -4,13 +4,37 @@ Backend-first Albion Online market analysis project targeting Asia/East by defau
 
 ## Current pipeline
 
-AODP → AlbionApiService / AODPNatsAdapter → normalized market data → SQLite → AnalysisService / Liquidity → StrategyEngine → FastAPI → React
+AODP → AlbionApiService / AODPNatsAdapter → normalized market data → SQLite → AnalysisService / Liquidity → StrategyEngine → FastAPI → React Business Dashboard
 
 The project supports current prices, append-only historical snapshots, price statistics/trend/spread analysis, arbitrage opportunities, configurable gross/net profit calculations, data freshness, and a liquidity-aware execution model.
 
 ## Data integrity policy
 
 **AODP current price snapshots are never used to infer actual trading volume, order quantity, or order-book depth.** Missing liquidity is represented as unavailable rather than fabricated or converted to zero. NATS liquidity is observational: only orders actually received and persisted are used.
+
+## Strategy architecture
+
+The application treats economic activities as independent strategies behind a common contract:
+
+StrategyRegistry → StrategyEngine → BusinessOpportunity → Business Dashboard
+
+- `StrategyDefinition` describes a strategy and its data/input requirements.
+- `BusinessStrategy` defines the common `evaluate(**inputs)` contract.
+- `StrategyRegistry` discovers independently addable strategy implementations.
+- `ArbitrageStrategy` adapts the existing `ArbitrageService`; arbitrage calculations are not duplicated.
+- `CraftingStrategy` uses the normalized recipe/production-rule layer when recipe and market inputs are available.
+- `BusinessOpportunity` is strategy-neutral and carries capital, revenue/cost/profit, ROI, risk, liquidity, confidence, freshness and time information.
+- `StrategyEngine` applies capital/risk filters and ranking without knowing strategy-specific calculation details.
+
+## Business Dashboard
+
+The React home screen is a unified dashboard over `/api/strategies` and `/api/opportunities`. Users can select the canonical server, provide available capital, filter by risk or strategy, and choose a backend ranking criterion.
+
+Strategy cards are generated from registry metadata rather than a hardcoded strategy list. Opportunity cards are generated from normalized `BusinessOpportunity` results. Unknown profit remains unavailable; it is never converted to zero. When there is no sufficient market/recipe data, the dashboard reports that no executable opportunities are available instead of fabricating a result.
+
+The canonical server IDs remain `east`, `west`, and `europe`; `east` may be displayed as `Asia / East`. Server IDs, item IDs, cities and profitability results are data/configuration inputs rather than strategy constants.
+
+The existing market-analysis and arbitrage views remain available below the dashboard and continue to use their existing backend services.
 
 ## Phase 5–7: Liquidity and order lifecycle
 
@@ -21,27 +45,9 @@ The project supports current prices, append-only historical snapshots, price sta
 - Historical order observations are retained separately from current order state.
 - NATS ingestion is opt-in and server-isolated for canonical `east`, `west`, and `europe`.
 
-## Phase 8: External source and business architecture preparation
+## Recipe data
 
-AODP public NATS `marketorders.deduped` is the selected external liquidity source. The adapter layer keeps source-specific protocol handling separate from analysis and strategy logic.
-
-## Phase 10: Business Strategy Integration
-
-The strategy layer is now executable rather than metadata-only:
-
-- `StrategyDefinition` describes a strategy and its data/input requirements.
-- `BusinessStrategy` defines the common `evaluate(**inputs)` contract.
-- `StrategyRegistry` discovers independent strategy implementations.
-- `ArbitrageStrategy` adapts the existing `ArbitrageService`; arbitrage calculations are not duplicated.
-- `BusinessOpportunity` is strategy-neutral and carries required/available capital, capital utilization, expected revenue/cost/profit, ROI, risk, liquidity, confidence and freshness.
-- `StrategyEngine` applies capital/risk filters and ranking without knowing strategy-specific calculation details.
-- `/api/strategies`, `/api/strategies/{strategy_id}`, and `/api/opportunities` expose discovery and normalized opportunities.
-
-### Dashboard policy
-
-The React home screen is a dashboard shell around normalized strategy opportunities. It accepts user-provided capital, risk and ranking preferences and does not fabricate results for unimplemented strategies. Current implemented strategy output is arbitrage only. Crafting, refining, transport, gathering, and other strategies must be added as independent strategy modules with real calculation inputs before they can produce opportunities.
-
-The canonical server IDs remain `east`, `west`, and `europe`; `east` may be displayed as `Asia / East`. Servers, item IDs, cities and profitability results are data/configuration inputs rather than strategy constants.
+The recipe layer is source-adaptable and stores normalized recipes/material relationships in SQLite. Phase 13 does not add or invent recipe records. If recipe or market inputs are missing, Crafting produces no fabricated opportunity.
 
 ## API
 
@@ -50,6 +56,8 @@ Existing market and arbitrage endpoints remain compatible. Strategy endpoints:
 - `GET /api/strategies`
 - `GET /api/strategies/{strategy_id}`
 - `GET /api/opportunities?server=east&capital=...&strategy=arbitrage&sort=profit`
+
+`/api/opportunities` is the current backend aggregation surface used by the Business Dashboard; it delegates calculation to `StrategyEngine` and returns normalized `BusinessOpportunity` values.
 
 Business calculations remain in backend services. The frontend displays backend results and does not reproduce profit calculations.
 
