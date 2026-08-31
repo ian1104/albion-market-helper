@@ -1,0 +1,184 @@
+name: Phase 17 Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Environment diagnostics
+        run: |
+          python --version
+          node --version
+          npm --version
+          git --version
+          git rev-parse HEAD
+          git status --short
+          echo '--- DNS ---'
+          for host in east.albion-online-data.com west.albion-online-data.com europe.albion-online-data.com nats.albion-online-data.com render.albiononline.com; do
+            echo "[$host]"
+            getent hosts "$host" || true
+          done
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Python syntax
+        run: python -m compileall .
+
+      - name: Full pytest
+        run: python -m pytest -q
+
+      - name: Clean database initialization
+        run: |
+          rm -f /tmp/amh-phase17.db
+          DATABASE_PATH=/tmp/amh-phase17.db python - <<'PY'
+          import sqlite3
+          from db.database import Database
+          db = Database('/tmp/amh-phase17.db')
+          db.initialize()
+          with sqlite3.connect('/tmp/amh-phase17.db') as con:
+              tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+          required = {
+              'market_prices', 'market_price_history', 'collection_runs',
+              'market_liquidity_orders', 'market_liquidity_order_observations'
+          }
+          missing = required - tables
+          assert not missing, missing
+          print('tables:', sorted(tables))
+          PY
+
+      - name: Live AODP REST validation
+        run: |
+          python - <<'PY'
+          from services.albion_api import AlbionApiService
+          from config import SUPPORTED_SERVERS
+          import json
+          results = {}
+          for server, host in SUPPORTED_SERVERS.items():
+              try:
+                  service = AlbionApiService(host=host, timeout=10, retry_count=1)
+                  records = service.fetch_prices(['T4_BAG'], ['Caerleon'], [1])
+                  results[server] = {'status': 'PASS', 'records': len(records)}
+              except Exception as exc:
+                  results[server] = {'status': 'BLOCKED', 'error': f'{type(exc).__name__}: {exc}'}
+          print(json.dumps(results, indent=2))
+          if not any(v['status'] == 'PASS' and v['records'] > 0 for v in results.values()):
+              raise SystemExit('No canonical AODP server returned real market records')
+          PY
+
+      - name: Live Item Metadata validation
+        run: |
+          python - <<'PY'
+          from services.item_metadata import ItemMetadataService
+          service = ItemMetadataService(timeout=20)
+          assert service.ensure_loaded(), service.last_error
+          item = service.get('T4_BAG')
+          assert item is not None
+          assert item.item_id == 'T4_BAG'
+          assert item.icon_url.startswith('https://render.albiononline.com/v1/item/T4_BAG.png')
+          print(item.to_dict())
+          PY
+
+      - name: Albion Render icon validation
+        run: |
+          python - <<'PY'
+          import httpx
+          from services.item_metadata import ItemMetadataService
+          url = ItemMetadataService.icon_url('T4_BAG', size=96)
+          response = httpx.get(url, timeout=15, follow_redirects=True)
+          print('status:', response.status_code, 'content-type:', response.headers.get('content-type'))
+          if response.status_code != 200 or not response.headers.get('content-type', '').startswith('image/'):
+              raise SystemExit('Albion Render icon request did not return an image')
+          PY
+
+      - name: AODP NATS connectivity validation
+        run: |
+          python - <<'PY'
+          import asyncio
+          import json
+          import socket
+          import nats
+          from config import AODP_NATS_HOST, AODP_NATS_PORTS
+
+          async def check(server, port):
+              result = {'server': server, 'port': port}
+              try:
+                  socket.getaddrinfo(AODP_NATS_HOST, port, type=socket.SOCK_STREAM)
+                  result['dns'] = 'PASS'
+              except Exception as exc:
+                  result['dns'] = f'BLOCKED: {type(exc).__name__}: {exc}'
+                  return result
+              try:
+                  nc = await nats.connect(
+                      servers=[f'nats://public:thenewalbiondata@{AODP_NATS_HOST}:{port}'],
+                      connect_timeout=5,
+                      max_reconnect_attempts=0,
+                  )
+                  result['connection'] = 'PASS'
+                  result['subject_probe'] = 'NOT TESTED'
+                  await nc.close()
+              except Exception as exc:
+                  result['connection'] = f'BLOCKED: {type(exc).__name__}: {exc}'
+              return result
+
+          async def main():
+              results = [await check(server, port) for server, port in AODP_NATS_PORTS.items()]
+              print(json.dumps(results, indent=2))
+              return results
+
+          results = asyncio.run(main())
+          if not any(r.get('connection') == 'PASS' for r in results):
+              raise SystemExit('No AODP NATS server accepted a connection')
+          PY
+
+      - name: FastAPI runtime and live-data smoke test
+        env:
+          DATABASE_PATH: /tmp/amh-phase17-runtime.db
+          AODP_NATS_ENABLED: 'false'
+        run: |
+          rm -f /tmp/amh-phase17-runtime.db
+          python run_server.py >/tmp/albion-market-helper-api.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+          for i in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:8000/ >/tmp/root.json; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8000/ >/tmp/root.json
+          curl --fail --silent http://127.0.0.1:8000/api/strategies >/tmp/strategies.json
+          curl --fail --silent 'http://127.0.0.1:8000/api/opportunities?server=east&sort=profit&limit=5' >/tmp/opportunities.json
+          curl --fail --silent 'http://127.0.0.1:8000/api/items?query=T4_BAG&limit=5' >/tmp/items.json
+          python - <<'PY'
+          import json
+          assert json.load(open('/tmp/root.json'))['status'] == 'ok'
+          assert isinstance(json.load(open('/tmp/strategies.json')).get('strategies'), list)
+          assert isinstance(json.load(open('/tmp/opportunities.json')).get('opportunities'), list)
+          items = json.load(open('/tmp/items.json'))
+          assert isinstance(items.get('items'), list)
+          assert 'available' in items and 'source' in items
+          assert items['items'], 'T4_BAG metadata search returned no item'
+          item = items['items'][0]
+          assert {'item_id', 'item_name', 'tier', 'enchantment', 'icon'} <= set(item)
+          print('runtime smoke: PASS')
+          PY
+
+      - name: Frontend dependencies
+        working-directory: frontend
+        run: npm install --no-audit --no-fund
+
+      - name: Frontend production build
+        working-directory: frontend
+        run: npm run build
