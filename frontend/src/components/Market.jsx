@@ -69,7 +69,7 @@ export default function Market({ server }) {
       ]);
       const cities = marketResponse.cities || [];
       const firstCity = cities[0]?.city || '';
-      const historyResponse = firstCity ? await api.itemHistory({ itemId: item.item_id, server, quality, city: firstCity }) : { history: [] };
+      const historyResponse = firstCity ? await api.itemHistory({ itemId: item.item_id, server, quality, city: firstCity, range }) : { history: [] };
       setCity(firstCity);
       setDetail({ metadata: metadataResponse.item, cities, history: historyResponse.history || [], opportunities: opportunityResponse.opportunities || [], analysis: null, error: '', loading: false });
       if (firstCity) await loadCityAnalysis(item.item_id, firstCity, quality, cities, metadataResponse.item, opportunityResponse.opportunities || [], range);
@@ -84,7 +84,7 @@ export default function Market({ server }) {
     try {
       const [marketResponse, historyResponse] = await Promise.all([
         api.market({ itemId, city: nextCity, quality: nextQuality, server }),
-        api.itemHistory({ itemId, server, quality: nextQuality, city: nextCity }),
+        api.itemHistory({ itemId, server, quality: nextQuality, city: nextCity, range: nextRange }),
       ]);
       setCity(nextCity);
       setDetail({ metadata, cities, history: historyResponse.history || marketResponse.history || [], opportunities, analysis: marketResponse.analysis || null, error: '', loading: false });
@@ -110,7 +110,7 @@ export default function Market({ server }) {
       <section className="panel item-header-panel"><div className="item-identity"><ItemIcon item={detail.metadata || selected} size="lg"/><div><p className="eyebrow">ITEM</p><h2>{text(detail.metadata?.item_name, selected.item_id)}</h2><span>{selected.item_id} · Tier {detail.metadata?.tier ?? 'Unknown'}{detail.metadata?.enchantment ? `.${detail.metadata.enchantment}` : ''} · {text(detail.metadata?.category, '분류 없음')}</span></div></div><div className="item-header-controls"><label><span>품질</span><select value={quality} onChange={e => setQuality(Number(e.target.value))}>{[1,2,3,4,5].map(x => <option key={x} value={x}>{x}</option>)}</select></label><Badge>{detail.loading ? '데이터 확인 중' : detail.cities.length ? `${detail.cities.length}개 도시 관측` : '데이터 없음'}</Badge></div></section>
       <div className="summary-strip market-summary"><Metric label="최저 판매가" value={money(current?.sell_price_min)}/><Metric label="최고 구매가" value={money(current?.buy_price_max)}/><Metric label="최근 가격" value={money(statistics?.sell?.latest)}/><Metric label="평균 가격" value={money(statistics?.sell?.average)}/><Metric label="가격 변화" value={statistics?.change?.sell?.percent == null ? '—' : percent(statistics.change.sell.percent)}/></div>
       <section className="panel chart-panel"><div className="section-title"><div><p className="eyebrow">OBSERVED PRICE · {city || '—'}</p><h2>가격 추세</h2></div><div className="chart-controls">{['1d','7d','30d','90d'].map(x => <button key={x} className={range === x ? 'active' : ''} onClick={() => setRange(x)}>{x.toUpperCase()}</button>)}</div></div><div className="chart-tabs"><span className="active">라인</span><span className="disabled">캔들 · OHLC 데이터 없음</span></div><LineChart rows={chartRows}/><p className="chart-disclaimer">AODP 관측 가격 기반입니다. 체결 기반 거래소 캔들로 해석하지 않습니다.</p></section>
-      <section className="panel"><div className="section-title"><div><p className="eyebrow">CITY COMPARISON</p><h2>도시별 가격</h2></div><span className="muted">행을 선택하면 해당 도시의 추세를 봅니다.</span></div><CityTable cities={detail.cities} selectedCity={city} onSelect={nextCity => loadCityAnalysis(selected.item_id, nextCity)}/></section>
+      <section className="panel"><div className="section-title"><div><p className="eyebrow">CITY COMPARISON</p><h2>도시별 가격</h2></div><span className="muted">행을 선택하면 해당 도시의 추세를 봅니다.</span></div><CityTable cities={detail.cities} selectedCity={city} onSelect={nextCity => loadCityAnalysis(selected.item_id, nextCity, quality, detail.cities, detail.metadata, detail.opportunities, range)}/></section>
       <section className="panel"><div className="section-title"><div><p className="eyebrow">BUSINESS OPPORTUNITIES</p><h2>이 아이템의 사업 기회</h2></div></div>{!detail.opportunities.length ? <StatePanel title="현재 발견된 사업 기회가 없습니다." detail="사업 기회가 0이라는 뜻이 아니라 현재 backend 조건에서 반환된 opportunity가 없다는 뜻입니다." /> : <div className="opportunity-list">{detail.opportunities.map((o, i) => <div className="opportunity-row" key={`${o.strategy_id}-${o.title}-${i}`}><div><Badge>{text(o.strategy_id)}</Badge><strong>{text(o.title, selected.item_id)}</strong><span>{text(o.explanation, '설명이 없습니다.')}</span></div><Metric label="예상 수익" value={o.expected_profit == null ? 'Unknown' : `${money(o.expected_profit)} S`} accent={o.expected_profit != null}/><Metric label="ROI" value={percent(o.roi_percent)}/></div>)}</div>}</section>
     </>}
   </div>;
