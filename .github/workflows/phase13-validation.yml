@@ -34,6 +34,7 @@ jobs:
           curl --fail --silent http://127.0.0.1:8000/ >/tmp/root.json
           curl --fail --silent http://127.0.0.1:8000/api/strategies >/tmp/strategies.json
           curl --fail --silent 'http://127.0.0.1:8000/api/opportunities?server=east&sort=profit&limit=5' >/tmp/opportunities.json
+          curl --fail --silent 'http://127.0.0.1:8000/api/items?query=T4_BAG&limit=5' >/tmp/items.json
           python - <<'PY'
           import json
           assert json.load(open('/tmp/root.json'))['status'] == 'ok'
@@ -41,6 +42,13 @@ jobs:
           assert isinstance(strategies.get('strategies'), list)
           opportunities = json.load(open('/tmp/opportunities.json'))
           assert isinstance(opportunities.get('opportunities'), list)
+          items = json.load(open('/tmp/items.json'))
+          assert isinstance(items.get('items'), list)
+          assert 'available' in items
+          assert 'source' in items
+          if items['items']:
+              item = items['items'][0]
+              assert {'item_id', 'item_name', 'tier', 'enchantment', 'icon'} <= set(item)
           PY
       - name: Set up Node
         uses: actions/setup-node@v4
