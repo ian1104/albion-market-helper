@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-DEFAULT_ITEM_SOURCE = "https://raw.githubusercontent.com/ao-data/ao-bin-dumps/master/items.json"
+DEFAULT_ITEM_SOURCE = "https://raw.githubusercontent.com/ao-data/ao-bin-dumps/master/formatted/items.json"
 RENDER_BASE = "https://render.albiononline.com/v1/item"
 
 
@@ -36,12 +36,7 @@ class ItemMetadata:
 
 
 class ItemMetadataService:
-    """Loads the public ao-bin-dumps item dictionary on demand.
-
-    The source is intentionally fetched lazily so an unavailable metadata host
-    never prevents the FastAPI application from starting. Loaded metadata is
-    kept in memory for the lifetime of the process.
-    """
+    """Loads the public ao-bin-dumps formatted item dictionary on demand."""
 
     def __init__(self, source_url: str = DEFAULT_ITEM_SOURCE, timeout: float = 30.0):
         self.source_url = source_url
