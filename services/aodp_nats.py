@@ -119,9 +119,11 @@ class AODPNatsConsumer:
         self.orders_saved = 0
         self.invalid_messages = 0
         self.connection_attempts = 0
+        self.last_message_at: str | None = None
 
     async def _handle_message(self, message) -> None:
         self.messages_received += 1
+        self.last_message_at = utc_now()
         try:
             orders = self.adapter.normalize(message.data, server=self.server)
             for order in orders:
