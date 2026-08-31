@@ -43,9 +43,17 @@ export function OpportunityCard({ opportunity, onOpen }) {
   </button>;
 }
 
-export function OpportunityDrawer({ opportunity, onClose }) {
+function opportunityItemId(opportunity) {
+  if (opportunity?.item_id) return opportunity.item_id;
+  const title = String(opportunity?.title || '');
+  const candidate = title.split(':', 1)[0].trim();
+  return /^T\d+_/.test(candidate) ? candidate : '';
+}
+
+export function OpportunityDrawer({ opportunity, onClose, onMarket }) {
   if (!opportunity) return null;
   const o = opportunity;
+  const itemId = opportunityItemId(o);
   const rows = [
     ['필요 자본', `${money(o.required_capital)} S`], ['가용 자본', `${money(o.available_capital)} S`],
     ['자본 활용률', percent(o.capital_utilization_percent)], ['필요 수량', text(o.required_quantity)],
@@ -59,6 +67,7 @@ export function OpportunityDrawer({ opportunity, onClose }) {
     <button className="icon-button close" onClick={onClose} aria-label="닫기"><Icon name="close"/></button>
     <Badge>{text(o.strategy_id)}</Badge><h2>{text(o.title)}</h2><p className="drawer-explanation">{text(o.explanation, '상세 설명이 없습니다.')}</p>
     <div className="detail-grid">{rows.map(([label, value]) => <Metric key={label} label={label} value={value}/>)}</div>
+    {itemId && onMarket && <button className="primary-button drawer-market-button" onClick={() => onMarket(itemId)}>이 아이템 시장 상세 보기</button>}
     <div className="analysis-note"><strong>판단 근거</strong><p>{text(o.explanation, '데이터가 부족하여 추가 판단을 제공할 수 없습니다.')}</p></div>
   </aside></div>;
 }
