@@ -26,8 +26,6 @@ class AODPNatsAdapter(MarketDataAdapter):
         if not isinstance(data, dict):
             raise ValueError("AODP NATS payload must be a JSON object")
 
-        # AODP publishes MarketUpload payloads with Orders[], while the live
-        # deduped subject can deliver an individual MarketOrder object.
         raw_orders = data.get("Orders")
         if isinstance(raw_orders, list):
             candidates = raw_orders
@@ -182,6 +180,13 @@ class AODPNatsConsumer:
         self.subscription_active = True
         self.last_error = None
 
+    async def _wait_before_retry(self, delay: float) -> None:
+        """Wait for backoff or stop immediately when shutdown is requested."""
+        try:
+            await asyncio.wait_for(self._stop.wait(), timeout=delay)
+        except asyncio.TimeoutError:
+            return
+
     async def run_forever(self) -> None:
         delay = self.reconnect_base_seconds
         while not self._stop.is_set():
@@ -200,7 +205,7 @@ class AODPNatsConsumer:
             finally:
                 await self._disconnect()
             if not self._stop.is_set():
-                await asyncio.sleep(delay)
+                await self._wait_before_retry(delay)
                 delay = min(self.reconnect_max_seconds, delay * 2)
 
     async def start(self) -> None:
