@@ -64,3 +64,9 @@ Business calculations remain in backend services. The frontend displays backend 
 ## Validation policy
 
 Python tests use fixtures/mocks and do not insert synthetic market data into the production database. Live AODP connectivity is tested separately. A fixture PASS is never a LIVE PASS, and code inspection is not runtime verification.
+
+## Phase 20: Live location and collector validation
+
+AODP NATS `LocationId` values are treated as marketplace identifiers, not world-zone IDs. The known canonical marketplace mappings currently used by the adapter are `7 → Thetford`, `1002 → Lymhurst`, `2004 → Bridgewatch`, `3003 → Black Market`, `3005 → Caerleon`, `3010 → Martlock`, and `4002 → Fort Sterling`. Unknown numeric IDs remain numeric rather than being guessed.
+
+The persistent NATS consumer retains reconnect/backoff, malformed-message isolation, order upsert, observation history, and graceful shutdown behavior. Phase 20 adds regression coverage for restart recovery and server isolation and a clean GitHub Actions workflow with bounded live observation. Live multi-city arbitrage remains observational: absence of a profitable candidate is reported as `NOT_OBSERVED`, never replaced by synthetic data.
