@@ -1,0 +1,102 @@
+name: Phase 21 Runtime Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  runtime-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout clean main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Environment diagnostics
+        run: |
+          python --version
+          node --version
+          npm --version
+          git --version
+          git rev-parse HEAD
+          for host in nats.albion-online-data.com east.albion-online-data.com west.albion-online-data.com europe.albion-online-data.com render.albiononline.com; do
+            echo "[$host]"
+            getent hosts "$host" || true
+          done
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Python compileall
+        run: python -m compileall .
+
+      - name: Full pytest
+        run: python -m pytest -q
+
+      - name: Frontend install and build
+        working-directory: frontend
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Application lifecycle live accumulation
+        env:
+          DATABASE_PATH: /tmp/amh-phase21-live.db
+          AODP_NATS_ENABLED: 'true'
+          AODP_NATS_SERVERS: east,west,europe
+          AODP_NATS_STALE_MINUTES: '15'
+        run: |
+          rm -f /tmp/amh-phase21-live.db
+          python - <<'PY'
+          from db.database import Database
+          Database('/tmp/amh-phase21-live.db').initialize()
+          PY
+          DATABASE_PATH=/tmp/amh-phase21-live.db AODP_NATS_ENABLED=true AODP_NATS_SERVERS=east,west,europe python run_server.py >/tmp/amh-phase21-server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/ >/tmp/root.json; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8000/ >/tmp/root.json
+          echo '--- application startup ---'
+          cat /tmp/root.json
+          echo '--- collecting for 300 seconds ---'
+          for i in {1..30}; do
+            sleep 10
+            echo "--- t=$((i*10))s ---"
+            for server in east west europe; do
+              curl --fail --silent "http://127.0.0.1:8000/api/liquidity/status?server=$server" || true
+              echo
+            done
+          done
+          echo '--- final opportunities ---'
+          curl --fail --silent 'http://127.0.0.1:8000/api/opportunities?server=east&capital=1000000' || true
+          echo
+          echo '--- database counts ---'
+          python - <<'PY'
+          import sqlite3, json
+          db = sqlite3.connect('/tmp/amh-phase21-live.db')
+          result = {}
+          for table in ('market_liquidity_orders', 'market_liquidity_order_observations'):
+              result[table] = db.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
+          result['by_server'] = dict(db.execute('SELECT server, COUNT(*) FROM market_liquidity_orders GROUP BY server').fetchall())
+          result['multi_city_groups'] = db.execute('''
+              SELECT COUNT(*) FROM (
+                SELECT server, item_id, quality FROM market_liquidity_orders
+                WHERE status='ACTIVE'
+                GROUP BY server, item_id, quality
+                HAVING COUNT(DISTINCT city) >= 2
+              )
+          ''').fetchone()[0]
+          print(json.dumps(result, indent=2))
+          if result['market_liquidity_orders'] == 0:
+              raise SystemExit('No live NATS orders observed during application lifecycle test')
+          PY
