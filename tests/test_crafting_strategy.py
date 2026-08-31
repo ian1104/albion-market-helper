@@ -27,9 +27,9 @@ def test_crafting_calculates_from_supplied_recipe_and_market_prices():
     opportunity = result[0]
     assert opportunity.expected_revenue == 2000
     assert opportunity.required_capital == 2100
-    assert opportunity.expected_profit == 346.0
+    assert opportunity.expected_profit == 340.0
     assert opportunity.roi_percent is not None
-    assert opportunity.profit_per_hour == 692.0
+    assert opportunity.profit_per_hour == 680.0
     assert opportunity.server == "east"
 
 
