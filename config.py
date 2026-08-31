@@ -8,6 +8,19 @@ SUPPORTED_SERVERS = {
     "west": "west.albion-online-data.com",
     "europe": "europe.albion-online-data.com",
 }
+SERVER_DISPLAY_NAMES = {
+    "east": "Asia / East",
+    "west": "Americas / West",
+    "europe": "Europe",
+}
+AODP_NATS_PORTS = {
+    "east": 24222,
+    "west": 4222,
+    "europe": 34222,
+}
+AODP_NATS_HOST = os.getenv("AODP_NATS_HOST", "nats.albion-online-data.com")
+AODP_NATS_SUBJECT = os.getenv("AODP_NATS_SUBJECT", "marketorders.deduped")
+AODP_NATS_ENABLED = os.getenv("AODP_NATS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 DEFAULT_WATCHLIST = ("T4_BAG", "T5_BAG")
 DEFAULT_CITIES = (
     "Caerleon",
@@ -48,6 +61,7 @@ AODP_REQUEST_DELAY_SECONDS = _env_float("AODP_REQUEST_DELAY_SECONDS", 0.5, 0.0)
 AODP_URL_MAX_LENGTH = _env_int("AODP_URL_MAX_LENGTH", 4096, 256)
 COLLECTOR_INTERVAL_SECONDS = _env_int("COLLECTOR_INTERVAL_SECONDS", 1800, 1)
 FRESH_DATA_MAX_AGE_MINUTES = _env_float("FRESH_DATA_MAX_AGE_MINUTES", 30.0, 0.0)
+AODP_NATS_STALE_MINUTES = _env_float("AODP_NATS_STALE_MINUTES", 15.0, 0.0)
 WATCHLIST = tuple(x.strip() for x in os.getenv("WATCHLIST", ",".join(DEFAULT_WATCHLIST)).split(",") if x.strip())
 CITIES = tuple(x.strip() for x in os.getenv("CITIES", ",".join(DEFAULT_CITIES)).split(",") if x.strip())
 QUALITIES = tuple(int(x.strip()) for x in os.getenv("QUALITIES", "1").split(",") if x.strip())
