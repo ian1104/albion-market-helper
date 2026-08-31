@@ -18,24 +18,72 @@ function Value({ label, value }) {
   return <div><span>{label}</span><strong>{value ?? '—'}</strong></div>;
 }
 
+function Dashboard({ server, capital, setCapital, risk, setRisk, strategy, setStrategy, sort, setSort, opportunities }) {
+  return <section>
+    <h1>Albion Business Dashboard</h1>
+    <section className="controls">
+      <label>Server<select value={server} onChange={() => {}} disabled><option>{server}</option></select></label>
+      <label>Capital (Silver)<input type="number" min="1" value={capital} onChange={(e) => setCapital(e.target.value)} placeholder="Enter capital" /></label>
+      <label>Risk<select value={risk} onChange={(e) => setRisk(e.target.value)}><option value="">Any</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="unknown">Unknown</option></select></label>
+      <label>Strategy<select value={strategy} onChange={(e) => setStrategy(e.target.value)}><option value="">All implemented</option><option value="arbitrage">Arbitrage</option></select></label>
+      <label>Rank<select value={sort} onChange={(e) => setSort(e.target.value)}><option value="profit">Expected Profit</option><option value="roi">ROI</option><option value="capital_efficiency">Capital Efficiency</option><option value="capital">Required Capital</option><option value="risk">Risk</option><option value="confidence">Confidence</option><option value="freshness">Freshness</option></select></label>
+    </section>
+    <h2>Best Opportunities</h2>
+    {!opportunities.length ? <div className="empty">No implemented strategy opportunities available.</div> : opportunities.map((o) => <section className="card opportunity" key={`${o.strategy_id}-${o.title}`}>
+      <div><strong>{o.strategy_id}</strong><br />{o.title}</div>
+      <Value label="Expected Profit" value={o.expected_profit} /><Value label="ROI" value={o.roi_percent == null ? 'Unavailable' : `${o.roi_percent.toFixed(2)}%`} />
+      <Value label="Required Capital" value={o.required_capital} /><Value label="Utilization" value={o.capital_utilization_percent == null ? '—' : `${o.capital_utilization_percent.toFixed(1)}%`} />
+      <Value label="Risk" value={o.risk} /><Value label="Liquidity" value={o.liquidity} /><Value label="Confidence" value={o.confidence} /><Value label="Freshness" value={o.freshness} />
+    </section>)}
+  </section>;
+}
+
 function App() {
-  const [itemId, setItem] = useState('T4_BAG');
-  const [city, setCity] = useState('Caerleon');
+  const [itemId, setItem] = useState('');
+  const [city, setCity] = useState('');
   const [quality, setQuality] = useState(1);
   const [server, setServer] = useState('east');
   const [range, setRange] = useState('24h');
+  const [capital, setCapital] = useState('');
+  const [risk, setRisk] = useState('');
+  const [strategy, setStrategy] = useState('');
   const [current, setCurrent] = useState();
   const [analysis, setAnalysis] = useState();
   const [spread, setSpread] = useState();
   const [history, setHistory] = useState([]);
   const [status, setStatus] = useState();
   const [opps, setOpps] = useState([]);
+  const [dashboardOpps, setDashboardOpps] = useState([]);
+  const [strategies, setStrategies] = useState([]);
   const [scanSort, setScanSort] = useState('roi');
+  const [dashboardSort, setDashboardSort] = useState('profit');
   const [error, setError] = useState('');
+
+  async function loadDashboard() {
+    try {
+      const params = new URLSearchParams({ server, sort: dashboardSort, limit: '12' });
+      if (capital) params.set('capital', capital);
+      if (risk) params.set('risk', risk);
+      if (strategy) params.set('strategy', strategy);
+      const response = await fetch(`${API}/api/opportunities?${params}`);
+      if (!response.ok) throw Error('Strategy API request failed');
+      setDashboardOpps((await response.json()).opportunities || []);
+    } catch (e) {
+      setDashboardOpps([]);
+      setError(e.message);
+    }
+  }
 
   async function load() {
     setError('');
     try {
+      const strategyResponse = await fetch(`${API}/api/strategies`);
+      if (strategyResponse.ok) setStrategies((await strategyResponse.json()).strategies || []);
+      await loadDashboard();
+      if (!itemId || !city) {
+        setCurrent(); setAnalysis(); setSpread(); setHistory([]); setOpps([]);
+        return;
+      }
       const q = new URLSearchParams({ item_id: itemId, city, quality, server });
       const [a, b, c, d, e, f] = await Promise.all([
         fetch(`${API}/api/market/prices?${q}`),
@@ -45,7 +93,7 @@ function App() {
         fetch(`${API}/api/market/spread?item_id=${encodeURIComponent(itemId)}&quality=${quality}&server=${server}&range=${range}`),
         fetch(`${API}/api/arbitrage?item_id=${encodeURIComponent(itemId)}&quality=${quality}&server=${server}&sort=${scanSort}`),
       ]);
-      if (!a.ok || !b.ok || !c.ok) throw Error('API request failed');
+      if (!a.ok || !b.ok || !c.ok) throw Error('Market API request failed');
       setCurrent((await a.json())[0]);
       setAnalysis(await b.json());
       setHistory(await c.json());
@@ -58,11 +106,15 @@ function App() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [server, range, scanSort]);
   const sell = analysis?.statistics?.sell || {};
 
   return <main>
-    <h1>Albion Market Helper</h1>
+    <Dashboard server={server === 'east' ? 'Asia / East' : server} capital={capital} setCapital={setCapital} risk={risk} setRisk={setRisk} strategy={strategy} setStrategy={setStrategy} sort={dashboardSort} setSort={setDashboardSort} opportunities={dashboardOpps} />
+    <section className="status">Implemented strategies: {strategies.filter((s) => s.calculator_key).map((s) => s.name).join(', ') || 'None'}. Unimplemented strategies are not fabricated.</section>
+    <button onClick={loadDashboard}>Refresh Dashboard</button>
+
+    <h2>Market Analysis</h2>
     <section className="controls">
       <label>Item ID<input value={itemId} onChange={(e) => setItem(e.target.value)} /></label>
       <label>City<input value={city} onChange={(e) => setCity(e.target.value)} /></label>
@@ -72,12 +124,8 @@ function App() {
       <button onClick={load}>Analyze</button>
     </section>
     {error && <div className="error">{error}</div>}
-
-    <h2>Current Market</h2>
-    <section className="card"><Value label="Sell Min" value={current?.sell_price_min} /><Value label="Buy Max" value={current?.buy_price_max} /><Value label="Last Updated" value={current?.updated_at} /></section>
-
-    <h2>Market Analysis</h2>
-    {!analysis ? null : !analysis.data_sufficient ? <div className="empty">Not enough historical data.</div> : <>
+    {current && <><h3>Current Market</h3><section className="card"><Value label="Sell Min" value={current.sell_price_min} /><Value label="Buy Max" value={current.buy_price_max} /><Value label="Last Updated" value={current.updated_at} /></section></>}
+    {!analysis ? <div className="empty">Enter an item ID and city to inspect market analysis.</div> : !analysis.data_sufficient ? <div className="empty">Not enough historical data.</div> : <>
       <section className="card"><Value label="Latest" value={sell.latest} /><Value label="Average" value={sell.average} /><Value label="Min / Max" value={`${sell.min ?? '—'} / ${sell.max ?? '—'}`} /><Value label="Change %" value={analysis.change?.sell?.percent == null ? '—' : `${analysis.change.sell.percent.toFixed(2)}%`} /></section>
       <Chart rows={analysis.trend?.series || history} />
       {spread?.data_sufficient && <section className="card"><Value label="Lowest City" value={spread.spread.lowest_city} /><Value label="Highest City" value={spread.spread.highest_city} /><Value label="Spread" value={`${spread.spread.absolute} (${spread.spread.percent?.toFixed(2)}%)`} /></section>}
