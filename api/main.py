@@ -18,7 +18,7 @@ from services.market_service import MarketService
 from services.scheduler import CollectorScheduler
 from services.analysis_service import AnalysisService, RANGES
 from services.arbitrage_service import ArbitrageService, CostModel
-from config import ALBION_SERVER, SUPPORTED_SERVERS
+from config import ALBION_SERVER, AODP_NATS_ENABLED, AODP_NATS_HOST, AODP_NATS_PORTS, AODP_NATS_SUBJECT, SERVER_DISPLAY_NAMES, SUPPORTED_SERVERS
 
 
 database = Database()
@@ -198,6 +198,27 @@ def market_spread(item_id: str = Query(..., min_length=1), quality: int = Query(
 
 def _cost_model(purchase_fee: float, selling_fee: float, transaction_tax: float, transport_cost: float, safety_buffer: float, configured: bool) -> CostModel:
     return CostModel(purchase_fee=purchase_fee, selling_fee=selling_fee, transaction_tax=transaction_tax, transport_cost=transport_cost, safety_buffer=safety_buffer, configured=configured)
+
+
+@app.get("/api/sources")
+def sources(server: str = ALBION_SERVER) -> dict[str, Any]:
+    if server not in SUPPORTED_SERVERS:
+        raise HTTPException(400, f"unsupported server: {server}")
+    return {
+        "server": server,
+        "server_name": SERVER_DISPLAY_NAMES[server],
+        "sources": {
+            "price": {"name": "aodp-http", "available": True},
+            "liquidity": {
+                "name": "aodp-nats",
+                "available": AODP_NATS_ENABLED,
+                "host": AODP_NATS_HOST,
+                "port": AODP_NATS_PORTS[server],
+                "subject": AODP_NATS_SUBJECT,
+                "policy": "unavailable_when_no_recent_order_data",
+            },
+        },
+    }
 
 
 @app.get("/api/arbitrage")
