@@ -26,12 +26,19 @@ class AODPNatsAdapter(MarketDataAdapter):
         if not isinstance(data, dict):
             raise ValueError("AODP NATS payload must be a JSON object")
 
+        # AODP's public client model defines MarketUpload with an Orders array,
+        # while the live deduped subject currently delivers individual
+        # MarketOrder objects. Accept both shapes without inventing fields.
         raw_orders = data.get("Orders")
-        if not isinstance(raw_orders, list):
-            raise ValueError("AODP NATS payload is missing Orders")
+        if isinstance(raw_orders, list):
+            candidates = raw_orders
+        elif "ItemTypeId" in data:
+            candidates = [data]
+        else:
+            raise ValueError("AODP NATS payload is neither MarketUpload nor MarketOrder")
 
         normalized: list[NormalizedMarketOrder] = []
-        for raw in raw_orders:
+        for raw in candidates:
             if not isinstance(raw, dict):
                 continue
             try:
