@@ -37,6 +37,25 @@ def test_aodp_nats_adapter_normalizes_real_quantity_and_sides():
     assert orders[2].price == 8800
 
 
+def test_aodp_nats_adapter_normalizes_observed_single_market_order():
+    order = {
+        "Id": 42,
+        "ItemTypeId": "T4_BAG",
+        "LocationId": "Bridgewatch",
+        "QualityLevel": 1,
+        "UnitPriceSilver": 9500,
+        "Amount": 4,
+        "AuctionType": "offer",
+    }
+    normalized = AODPNatsAdapter().normalize(order, server="east", observed_at=OBSERVED)
+    assert len(normalized) == 1
+    assert normalized[0].order_id == "42"
+    assert normalized[0].city == "Bridgewatch"
+    assert normalized[0].side == "sell"
+    assert normalized[0].price == 9500
+    assert normalized[0].quantity == 4
+
+
 def test_adapter_rejects_malformed_payload():
     with pytest.raises(ValueError):
         AODPNatsAdapter().normalize({"not_orders": []}, server="east", observed_at=OBSERVED)
