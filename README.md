@@ -49,3 +49,16 @@ The project normalizes those messages through `MarketDataAdapter` / `AODPNatsAda
 AODP market-order data is observational rather than a guaranteed complete order book: the AODP client uploads orders that users actually load in-game, and subscribers can miss earlier messages. Therefore liquidity is only treated as available when recent normalized order data exists; otherwise it remains unavailable.
 
 NATS ingestion is opt-in through `AODP_NATS_ENABLED`. The adapter and tests are network-independent; live NATS access is validated separately.
+
+
+## Phase 7: Live liquidity ingestion and order lifecycle
+
+- **Persistent ingestion:** `AODPNatsConsumer` maintains a long-lived application subscription to `marketorders.deduped`, handles reconnects with exponential backoff, isolates malformed messages, and shuts down cleanly. This is a persistent application consumer, not a JetStream durable consumer; new subscribers can miss earlier public-stream messages.
+- **Order identity:** current order state is keyed by `(source, server, order_id)` where an AODP order ID is available. Repeated observations update the current record rather than creating duplicate current rows.
+- **Observation history:** every normalized observation is appended to `market_liquidity_order_observations` so price/quantity changes and last-seen history are not lost when current state is updated.
+- **Lifecycle:** orders track `first_seen`, `last_seen`, `expires_at`, and `status` (`ACTIVE`, `EXPIRED`, `STALE`, `UNKNOWN`). Expiry and stale thresholds are configuration-driven. Lifecycle state is observational and is not proof of an in-game fill/completion event.
+- **Current liquidity:** the liquidity provider consumes only current active orders. Expired and stale orders are excluded.
+- **Server isolation:** NATS subscriptions, order identity, lifecycle queries, and liquidity queries retain the canonical server dimension (`east`, `west`, `europe`). Additional servers can be added through configuration/source metadata.
+- **Production data policy:** fixtures remain test-only. AODP current-price snapshots are never used to invent order quantity, volume, or depth.
+
+The AODP developer documentation states that `marketorders.deduped` contains deduplicated market orders, that new subscribers can miss earlier messages, and recommends tracking an order's last-seen time before treating an unseen order as probably completed.

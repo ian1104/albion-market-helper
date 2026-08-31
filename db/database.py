@@ -40,10 +40,30 @@ CREATE TABLE IF NOT EXISTS market_liquidity_orders (
  expires_at TEXT,
  observed_at TEXT NOT NULL,
  source_timestamp TEXT,
+ first_seen TEXT,
+ last_seen TEXT,
+ status TEXT NOT NULL DEFAULT 'ACTIVE',
  UNIQUE(source, server, order_id)
 );
 CREATE INDEX IF NOT EXISTS idx_market_liquidity_lookup
-ON market_liquidity_orders(server, item_id, city, quality, side, price, observed_at);
+ON market_liquidity_orders(server, item_id, city, quality, side, status, last_seen, expires_at, price);
+CREATE TABLE IF NOT EXISTS market_liquidity_order_observations (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ source TEXT NOT NULL,
+ server TEXT NOT NULL,
+ order_id TEXT,
+ item_id TEXT NOT NULL,
+ city TEXT NOT NULL,
+ quality INTEGER NOT NULL,
+ side TEXT NOT NULL,
+ price REAL NOT NULL,
+ quantity REAL NOT NULL,
+ expires_at TEXT,
+ observed_at TEXT NOT NULL,
+ source_timestamp TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_liquidity_observations_lookup
+ON market_liquidity_order_observations(server, item_id, city, quality, side, observed_at);
 CREATE TABLE IF NOT EXISTS collection_runs (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  server TEXT NOT NULL DEFAULT 'east',
@@ -104,36 +124,98 @@ class Database:
         if "market_price_history" in tables:
             connection.execute("DROP INDEX IF EXISTS idx_market_price_history_lookup")
             connection.execute("CREATE INDEX idx_market_price_history_lookup ON market_price_history(server, item_id, city, quality, recorded_at)")
+        if "market_liquidity_orders" in tables:
+            columns = self._columns(connection, "market_liquidity_orders")
+            if "first_seen" not in columns:
+                connection.execute("ALTER TABLE market_liquidity_orders ADD COLUMN first_seen TEXT")
+            if "last_seen" not in columns:
+                connection.execute("ALTER TABLE market_liquidity_orders ADD COLUMN last_seen TEXT")
+            if "status" not in columns:
+                connection.execute("ALTER TABLE market_liquidity_orders ADD COLUMN status TEXT NOT NULL DEFAULT 'ACTIVE'")
+            connection.execute("UPDATE market_liquidity_orders SET first_seen=COALESCE(first_seen, observed_at), last_seen=COALESCE(last_seen, observed_at), status=COALESCE(status, 'ACTIVE')")
+            connection.execute("DROP INDEX IF EXISTS idx_market_liquidity_lookup")
+            connection.execute("CREATE INDEX idx_market_liquidity_lookup ON market_liquidity_orders(server, item_id, city, quality, side, status, last_seen, expires_at, price)")
+        connection.execute("""CREATE TABLE IF NOT EXISTS market_liquidity_order_observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, server TEXT NOT NULL, order_id TEXT,
+            item_id TEXT NOT NULL, city TEXT NOT NULL, quality INTEGER NOT NULL, side TEXT NOT NULL,
+            price REAL NOT NULL, quantity REAL NOT NULL, expires_at TEXT, observed_at TEXT NOT NULL, source_timestamp TEXT
+        )""")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_liquidity_observations_lookup ON market_liquidity_order_observations(server, item_id, city, quality, side, observed_at)")
 
     def upsert_liquidity_order(self, order):
         self.initialize()
         with self.connect() as connection:
+            values = (order.source, order.server, order.order_id, order.item_id, order.city, order.quality, order.side, order.price, order.quantity, order.expires_at, order.observed_at, order.source_timestamp)
+            connection.execute("""INSERT INTO market_liquidity_order_observations
+                (source,server,order_id,item_id,city,quality,side,price,quantity,expires_at,observed_at,source_timestamp)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""", values)
             if order.order_id is not None:
                 connection.execute("""INSERT INTO market_liquidity_orders
-                    (source,server,order_id,item_id,city,quality,side,price,quantity,expires_at,observed_at,source_timestamp)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                    (source,server,order_id,item_id,city,quality,side,price,quantity,expires_at,observed_at,first_seen,last_seen,status,source_timestamp)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(source,server,order_id) DO UPDATE SET
                     item_id=excluded.item_id, city=excluded.city, quality=excluded.quality, side=excluded.side,
                     price=excluded.price, quantity=excluded.quantity, expires_at=excluded.expires_at,
-                    observed_at=excluded.observed_at, source_timestamp=excluded.source_timestamp""",
-                    (order.source,order.server,order.order_id,order.item_id,order.city,order.quality,order.side,order.price,order.quantity,order.expires_at,order.observed_at,order.source_timestamp))
+                    observed_at=excluded.observed_at, last_seen=excluded.last_seen, status='ACTIVE',
+                    source_timestamp=excluded.source_timestamp""",
+                    (*values[:11], order.observed_at, order.observed_at, 'ACTIVE', order.source_timestamp))
             else:
                 connection.execute("""INSERT INTO market_liquidity_orders
-                    (source,server,order_id,item_id,city,quality,side,price,quantity,expires_at,observed_at,source_timestamp)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (order.source,order.server,None,order.item_id,order.city,order.quality,order.side,order.price,order.quantity,order.expires_at,order.observed_at,order.source_timestamp))
+                    (source,server,order_id,item_id,city,quality,side,price,quantity,expires_at,observed_at,first_seen,last_seen,status,source_timestamp)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (*values[:11], order.observed_at, order.observed_at, 'ACTIVE', order.source_timestamp))
 
-    def liquidity_orders(self, *, server, item_id, city, quality, side=None, observed_after=None):
+    def refresh_liquidity_order_status(self, *, server: str | None = None, now: str | None = None, stale_minutes: float = 15.0) -> dict[str, int]:
+        from datetime import datetime, timedelta, timezone
+        if stale_minutes < 0:
+            raise ValueError("stale_minutes must be >= 0")
+        current = datetime.fromisoformat((now or datetime.now(timezone.utc).isoformat()).replace("Z", "+00:00")).astimezone(timezone.utc)
+        current_s = current.isoformat().replace("+00:00", "Z")
+        cutoff_s = (current - timedelta(minutes=stale_minutes)).isoformat().replace("+00:00", "Z")
+        self.initialize()
+        clauses = ["1=1"]
+        params: list[Any] = []
+        if server is not None:
+            clauses.append("server=?"); params.append(server)
+        with self.connect() as connection:
+            rows = connection.execute(f"SELECT id, expires_at, last_seen, status FROM market_liquidity_orders WHERE {' AND '.join(clauses)}", params).fetchall()
+            counts = {"ACTIVE": 0, "EXPIRED": 0, "STALE": 0, "UNKNOWN": 0}
+            for row in rows:
+                status = "UNKNOWN"
+                try:
+                    expires = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00")).astimezone(timezone.utc) if row["expires_at"] else None
+                    last_seen = datetime.fromisoformat(row["last_seen"].replace("Z", "+00:00")).astimezone(timezone.utc) if row["last_seen"] else None
+                    if expires is not None and expires <= current:
+                        status = "EXPIRED"
+                    elif last_seen is None:
+                        status = "UNKNOWN"
+                    elif last_seen.isoformat().replace("+00:00", "Z") < cutoff_s:
+                        status = "STALE"
+                    else:
+                        status = "ACTIVE"
+                except (TypeError, ValueError):
+                    status = "UNKNOWN"
+                connection.execute("UPDATE market_liquidity_orders SET status=?, observed_at=CASE WHEN ?='ACTIVE' THEN last_seen ELSE observed_at END WHERE id=?", (status, status, row["id"]))
+                counts[status] += 1
+            return counts
+
+    def liquidity_orders(self, *, server, item_id, city, quality, side=None, observed_after=None, include_inactive: bool = False, stale_minutes: float = 15.0, now: str | None = None):
+        self.refresh_liquidity_order_status(server=server, now=now, stale_minutes=stale_minutes)
         self.initialize()
         clauses=["server=?", "item_id=?", "city=?", "quality=?"]
         params=[server,item_id,city,quality]
         if side is not None:
             clauses.append("side=?"); params.append(side)
         if observed_after is not None:
-            clauses.append("observed_at>=?"); params.append(observed_after)
+            clauses.append("last_seen>=?"); params.append(observed_after)
+        if not include_inactive:
+            clauses.append("status='ACTIVE'")
         with self.connect() as connection:
             rows=connection.execute(f"SELECT * FROM market_liquidity_orders WHERE {' AND '.join(clauses)} ORDER BY price", params).fetchall()
             return [dict(row) for row in rows]
+
+    def liquidity_order_counts(self, *, server: str | None = None, stale_minutes: float = 15.0) -> dict[str, int]:
+        return self.refresh_liquidity_order_status(server=server, stale_minutes=stale_minutes)
 
     def upsert_current(self, record: dict[str, Any]):
         self.initialize()

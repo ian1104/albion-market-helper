@@ -1,18 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Any
+import logging
+from typing import Any, Awaitable, Callable
 
+from config import AODP_NATS_RECONNECT_MAX_SECONDS, AODP_NATS_RECONNECT_SECONDS
 from services.market_data import MarketDataAdapter, NormalizedMarketOrder, utc_now
+
+logger = logging.getLogger(__name__)
 
 
 class AODPNatsAdapter(MarketDataAdapter):
-    """Normalize AODP public NATS market-order messages.
-
-    AODP exposes individual active market orders through the marketorders
-    stream. The adapter never invents quantity/depth when the message does
-    not contain them.
-    """
+    """Normalize AODP public NATS market-order messages."""
 
     source_name = "aodp-nats"
 
@@ -34,7 +34,10 @@ class AODPNatsAdapter(MarketDataAdapter):
         for raw in raw_orders:
             if not isinstance(raw, dict):
                 continue
-            order = self._normalize_order(raw, server=server, observed_at=observed)
+            try:
+                order = self._normalize_order(raw, server=server, observed_at=observed)
+            except (TypeError, ValueError, KeyError):
+                continue
             if order is not None:
                 normalized.append(order)
         return normalized
@@ -46,7 +49,7 @@ class AODPNatsAdapter(MarketDataAdapter):
         price = raw.get("UnitPriceSilver")
         quantity = raw.get("Amount")
         auction_type = str(raw.get("AuctionType", "")).lower()
-        if not item_id or not city or quality is None or price is None or quantity is None:
+        if not item_id or not city or quality is None or price is None or quantity is None or raw.get("Id") is None:
             return None
         if auction_type in {"offer", "sell", "sellorder", "sell_order"}:
             side = "sell"
@@ -54,13 +57,9 @@ class AODPNatsAdapter(MarketDataAdapter):
             side = "buy"
         else:
             return None
-        try:
-            quality_i = int(quality)
-            price_f = float(price)
-            quantity_f = float(quantity)
-            order_id = str(raw["Id"]) if raw.get("Id") is not None else None
-        except (TypeError, ValueError):
-            return None
+        quality_i = int(quality)
+        price_f = float(price)
+        quantity_f = float(quantity)
         if quality_i < 1 or price_f <= 0 or quantity_f <= 0:
             return None
         expires = raw.get("Expires")
@@ -74,7 +73,7 @@ class AODPNatsAdapter(MarketDataAdapter):
             side=side,
             price=price_f,
             quantity=quantity_f,
-            order_id=order_id,
+            order_id=str(raw["Id"]),
             expires_at=expires_s,
             observed_at=observed_at,
             source_timestamp=None,
@@ -82,39 +81,115 @@ class AODPNatsAdapter(MarketDataAdapter):
 
 
 class AODPNatsConsumer:
-    """Optional async consumer for the public AODP market-order stream.
+    """Long-lived NATS subscriber with reconnect/backoff and graceful shutdown.
 
-    The network dependency is kept out of the normalization layer so tests can
-    exercise parsing without DNS, NATS, or live game traffic.
+    This is a persistent application process, not a JetStream durable consumer:
+    the public AODP stream is a core NATS subject and new subscribers can miss
+    messages published before they connected.
     """
 
-    def __init__(self, adapter: AODPNatsAdapter, database, *, server: str, nats_url: str, subject: str = "marketorders.deduped"):
+    def __init__(
+        self,
+        adapter: AODPNatsAdapter,
+        database,
+        *,
+        server: str,
+        nats_url: str,
+        subject: str = "marketorders.deduped",
+        reconnect_base_seconds: float = AODP_NATS_RECONNECT_SECONDS,
+        reconnect_max_seconds: float = AODP_NATS_RECONNECT_MAX_SECONDS,
+        on_message_error: Callable[[Exception], Awaitable[None] | None] | None = None,
+    ):
+        if not server or not nats_url or not subject:
+            raise ValueError("server, nats_url and subject are required")
+        if reconnect_base_seconds <= 0 or reconnect_max_seconds < reconnect_base_seconds:
+            raise ValueError("invalid reconnect backoff configuration")
         self.adapter = adapter
         self.database = database
         self.server = server
         self.nats_url = nats_url
         self.subject = subject
-        self._subscription = None
+        self.reconnect_base_seconds = reconnect_base_seconds
+        self.reconnect_max_seconds = reconnect_max_seconds
+        self.on_message_error = on_message_error
+        self._stop = asyncio.Event()
         self._client = None
+        self._subscription = None
+        self.messages_received = 0
+        self.orders_saved = 0
+        self.invalid_messages = 0
+        self.connection_attempts = 0
 
-    async def start(self) -> None:
+    async def _handle_message(self, message) -> None:
+        self.messages_received += 1
+        try:
+            orders = self.adapter.normalize(message.data, server=self.server)
+            for order in orders:
+                self.database.upsert_liquidity_order(order)
+            self.orders_saved += len(orders)
+        except Exception as exc:
+            self.invalid_messages += 1
+            logger.warning("AODP NATS message failed for %s: %s", self.server, exc)
+            if self.on_message_error is not None:
+                result = self.on_message_error(exc)
+                if asyncio.iscoroutine(result):
+                    await result
+
+    async def _connect_once(self) -> None:
         try:
             import nats
         except ImportError as exc:
             raise RuntimeError("nats-py is required to consume AODP NATS data") from exc
-        self._client = await nats.connect(self.nats_url)
+        self.connection_attempts += 1
+        self._client = await nats.connect(
+            servers=[self.nats_url],
+            reconnect_time_wait=1,
+            max_reconnect_attempts=-1,
+        )
         self._subscription = await self._client.subscribe(self.subject, cb=self._handle_message)
+        await self._client.flush()
 
-    async def _handle_message(self, message) -> int:
-        orders = self.adapter.normalize(message.data, server=self.server)
-        for order in orders:
-            self.database.upsert_liquidity_order(order)
-        return len(orders)
+    async def run_forever(self) -> None:
+        delay = self.reconnect_base_seconds
+        while not self._stop.is_set():
+            try:
+                await self._connect_once()
+                delay = self.reconnect_base_seconds
+                while not self._stop.is_set() and self._client is not None and not self._client.is_closed:
+                    await asyncio.sleep(0.5)
+                if self._stop.is_set():
+                    break
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("AODP NATS connection failed for %s: %s", self.server, exc)
+            finally:
+                await self._disconnect()
+            if not self._stop.is_set():
+                await asyncio.sleep(delay)
+                delay = min(self.reconnect_max_seconds, delay * 2)
+
+    async def start(self) -> None:
+        self._stop.clear()
+        await self.run_forever()
 
     async def stop(self) -> None:
+        self._stop.set()
+        await self._disconnect()
+
+    async def _disconnect(self) -> None:
         if self._subscription is not None:
-            await self._subscription.unsubscribe()
+            try:
+                await self._subscription.unsubscribe()
+            except Exception:
+                pass
             self._subscription = None
         if self._client is not None:
-            await self._client.drain()
+            try:
+                await self._client.drain()
+            except Exception:
+                try:
+                    await self._client.close()
+                except Exception:
+                    pass
             self._client = None

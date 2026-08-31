@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Protocol
 
+from config import AODP_NATS_STALE_MINUTES
+
 
 @dataclass(frozen=True)
 class DepthLevel:
@@ -97,23 +99,15 @@ def slippage_percent(reference_price: float, execution_price: float, side: str) 
         raise ValueError("prices must be greater than zero")
     if side not in {"buy", "sell"}:
         raise ValueError("side must be buy or sell")
-    # Buy slippage is execution above the quoted buy-side reference.
-    # Sell slippage is execution below the quoted sell-side reference.
     if side == "buy":
         return (execution_price - reference_price) / reference_price * 100.0
     return (reference_price - execution_price) / reference_price * 100.0
 
 
 class DatabaseLiquidityProvider:
-    """Liquidity provider backed by normalized external market-order data.
+    """Liquidity provider backed by normalized external market-order data."""
 
-    ``buy_depth`` represents the sell offers consumed when buying in the
-    requested city; ``sell_depth`` represents buy requests consumed when
-    selling. This preserves the Phase 5 execution API while keeping the
-    underlying order-book side explicit in storage.
-    """
-
-    def __init__(self, database, *, max_age_minutes: float = 15.0, source: str | None = None):
+    def __init__(self, database, *, max_age_minutes: float = AODP_NATS_STALE_MINUTES, source: str | None = None):
         if max_age_minutes < 0:
             raise ValueError("max_age_minutes must be >= 0")
         self.database = database
@@ -123,7 +117,11 @@ class DatabaseLiquidityProvider:
     def get(self, server: str, item_id: str, city: str, quality: int) -> LiquiditySnapshot | None:
         from datetime import datetime, timedelta, timezone
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=self.max_age_minutes)
-        rows = self.database.liquidity_orders(server=server, item_id=item_id, city=city, quality=quality, observed_after=cutoff.isoformat().replace("+00:00", "Z"))
+        rows = self.database.liquidity_orders(
+            server=server, item_id=item_id, city=city, quality=quality,
+            observed_after=cutoff.isoformat().replace("+00:00", "Z"),
+            stale_minutes=self.max_age_minutes,
+        )
         if self.source is not None:
             rows = [row for row in rows if row["source"] == self.source]
         if not rows:

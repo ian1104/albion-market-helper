@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from db.database import Database
 from services.arbitrage_service import ArbitrageService, CostModel
-from services.liquidity import DepthLevel, LiquiditySnapshot, executable_quantity, slippage_percent, weighted_average_execution_price
+from services.liquidity import DatabaseLiquidityProvider, DepthLevel, LiquiditySnapshot, executable_quantity, slippage_percent, weighted_average_execution_price
 from services.market_service import MarketService
 
 
@@ -69,7 +69,7 @@ def test_available_liquidity_produces_executable_and_realistic_profit(tmp_path):
     assert op['liquidity']['executable_quantity'] == 20
     assert op['realistic_profit']['quantity'] == 20
     assert op['realistic_profit']['net_profit'] == 50000
-    assert op['confidence'] == 'MEDIUM'  # historical stability is unavailable with one snapshot
+    assert op['confidence'] == 'MEDIUM'
 
 
 def test_liquidity_service_endpoint(tmp_path, monkeypatch):
@@ -93,3 +93,30 @@ def test_depth_aware_realistic_profit_and_slippage(tmp_path):
     assert op['realistic_profit']['buy_execution_price'] == 9500
     assert op['realistic_profit']['sell_execution_price'] == 11250
     assert op['realistic_profit']['net_profit'] == 17500
+
+
+def test_database_liquidity_excludes_stale_orders(tmp_path):
+    db = Database(tmp_path / "stale.db")
+    from services.aodp_nats import AODPNatsAdapter
+    order = AODPNatsAdapter().normalize({"Orders": [{"Id": 1, "ItemTypeId": "T4_BAG", "LocationId": "Caerleon", "QualityLevel": 1,
+        "UnitPriceSilver": 9000, "Amount": 10, "AuctionType": "offer"}]},
+        server="east", observed_at="2026-08-31T05:00:00Z")[0]
+    db.upsert_liquidity_order(order)
+    provider = DatabaseLiquidityProvider(db, max_age_minutes=15, source="aodp-nats")
+    assert provider.get("east", "T4_BAG", "Caerleon", 1) is None
+
+
+def test_liquidity_status_and_summary_endpoints(tmp_path, monkeypatch):
+    import api.main as main
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(main, 'database', seed(tmp_path))
+    monkeypatch.setattr(main, 'lifecycle_manager', __import__('services.order_lifecycle', fromlist=['OrderLifecycleManager']).OrderLifecycleManager(main.database, stale_minutes=60))
+    client = TestClient(main.app)
+    status = client.get('/api/liquidity/status', params={'server': 'east'})
+    summary = client.get('/api/liquidity/summary', params={'server': 'east'})
+    orders = client.get('/api/liquidity/orders', params={'item_id': 'T4_BAG', 'city': 'Caerleon', 'quality': 1, 'server': 'east'})
+    assert status.status_code == 200
+    assert summary.status_code == 200
+    assert orders.status_code == 200
+    assert status.json()['enabled'] is False
+    assert summary.json()['available'] is False

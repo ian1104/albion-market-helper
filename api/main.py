@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
@@ -16,9 +17,14 @@ from services.albion_api import (
 from services.collector import Collector
 from services.market_service import MarketService
 from services.scheduler import CollectorScheduler
+from services.aodp_nats import AODPNatsAdapter, AODPNatsConsumer
+from services.order_lifecycle import OrderLifecycleManager
 from services.analysis_service import AnalysisService, RANGES
 from services.arbitrage_service import ArbitrageService, CostModel
-from config import ALBION_SERVER, AODP_NATS_ENABLED, AODP_NATS_HOST, AODP_NATS_PORTS, AODP_NATS_SUBJECT, SERVER_DISPLAY_NAMES, SUPPORTED_SERVERS
+from config import (
+    ALBION_SERVER, AODP_NATS_ENABLED, AODP_NATS_HOST, AODP_NATS_PORTS, AODP_NATS_SUBJECT,
+    AODP_NATS_SERVERS, AODP_NATS_STALE_MINUTES, SERVER_DISPLAY_NAMES, SUPPORTED_SERVERS,
+)
 
 
 database = Database()
@@ -26,11 +32,34 @@ market_service = MarketService(database)
 albion_api = AlbionApiService()
 collector = Collector(albion_api, market_service)
 scheduler = CollectorScheduler(collector)
+lifecycle_manager = OrderLifecycleManager(database, stale_minutes=AODP_NATS_STALE_MINUTES)
+nats_consumers: dict[str, AODPNatsConsumer] = {}
+nats_tasks: dict[str, Any] = {}
+
+
+def _nats_url(server: str) -> str:
+    return f"nats://public:thenewalbiondata@{AODP_NATS_HOST}:{AODP_NATS_PORTS[server]}"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if AODP_NATS_ENABLED:
+        for server_name in AODP_NATS_SERVERS:
+            consumer = AODPNatsConsumer(
+                AODPNatsAdapter(), database, server=server_name,
+                nats_url=_nats_url(server_name), subject=AODP_NATS_SUBJECT,
+            )
+            nats_consumers[server_name] = consumer
+            nats_tasks[server_name] = asyncio.create_task(consumer.start(), name=f"aodp-nats-{server_name}")
     yield
+    for consumer in nats_consumers.values():
+        await consumer.stop()
+    for task in nats_tasks.values():
+        task.cancel()
+    if nats_tasks:
+        await asyncio.gather(*nats_tasks.values(), return_exceptions=True)
+    nats_tasks.clear()
+    nats_consumers.clear()
     scheduler.stop()
 
 
@@ -215,10 +244,54 @@ def sources(server: str = ALBION_SERVER) -> dict[str, Any]:
                 "host": AODP_NATS_HOST,
                 "port": AODP_NATS_PORTS[server],
                 "subject": AODP_NATS_SUBJECT,
+                "enabled_for_server": AODP_NATS_ENABLED and server in AODP_NATS_SERVERS,
+                "connected": bool(nats_consumers.get(server) and nats_consumers[server]._client is not None and not nats_consumers[server]._client.is_closed),
                 "policy": "unavailable_when_no_recent_order_data",
             },
         },
     }
+
+
+@app.get("/api/liquidity/status")
+def liquidity_status(server: str = ALBION_SERVER) -> dict[str, Any]:
+    _validate_server(server)
+    counts = lifecycle_manager.refresh(server=server)
+    consumer = nats_consumers.get(server)
+    return {
+        "server": server,
+        "source": "aodp-nats",
+        "enabled": AODP_NATS_ENABLED and server in AODP_NATS_SERVERS,
+        "connected": bool(consumer and consumer._client is not None and not consumer._client.is_closed),
+        "messages_received": consumer.messages_received if consumer else 0,
+        "orders_saved": consumer.orders_saved if consumer else 0,
+        "invalid_messages": consumer.invalid_messages if consumer else 0,
+        "connection_attempts": consumer.connection_attempts if consumer else 0,
+        "order_counts": counts,
+        "stale_minutes": AODP_NATS_STALE_MINUTES,
+    }
+
+
+@app.get("/api/liquidity/orders")
+def liquidity_orders(
+    item_id: str = Query(..., min_length=1), city: str = Query(..., min_length=1),
+    quality: int = Query(1, ge=1), side: str | None = None, server: str = ALBION_SERVER,
+    include_inactive: bool = False,
+) -> dict[str, Any]:
+    _validate_server(server)
+    if side is not None and side not in {"buy", "sell"}:
+        raise HTTPException(400, "side must be buy or sell")
+    rows = database.liquidity_orders(
+        server=server, item_id=item_id, city=city, quality=quality, side=side,
+        include_inactive=include_inactive, stale_minutes=AODP_NATS_STALE_MINUTES,
+    )
+    return {"server": server, "item_id": item_id, "city": city, "quality": quality, "orders": rows}
+
+
+@app.get("/api/liquidity/summary")
+def liquidity_summary(server: str = ALBION_SERVER) -> dict[str, Any]:
+    _validate_server(server)
+    counts = lifecycle_manager.refresh(server=server)
+    return {"server": server, "source": "aodp-nats", "counts": counts, "available": counts.get("ACTIVE", 0) > 0}
 
 
 @app.get("/api/arbitrage")
