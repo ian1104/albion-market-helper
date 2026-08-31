@@ -26,9 +26,8 @@ class AODPNatsAdapter(MarketDataAdapter):
         if not isinstance(data, dict):
             raise ValueError("AODP NATS payload must be a JSON object")
 
-        # AODP's public client model defines MarketUpload with an Orders array,
-        # while the live deduped subject currently delivers individual
-        # MarketOrder objects. Accept both shapes without inventing fields.
+        # AODP publishes MarketUpload payloads with Orders[], while the live
+        # deduped subject can deliver an individual MarketOrder object.
         raw_orders = data.get("Orders")
         if isinstance(raw_orders, list):
             candidates = raw_orders
@@ -89,12 +88,7 @@ class AODPNatsAdapter(MarketDataAdapter):
 
 
 class AODPNatsConsumer:
-    """Long-lived NATS subscriber with reconnect/backoff and graceful shutdown.
-
-    This is a persistent application process, not a JetStream durable consumer:
-    the public AODP stream is a core NATS subject and new subscribers can miss
-    messages published before they connected.
-    """
+    """Long-lived NATS subscriber with reconnect/backoff and graceful shutdown."""
 
     def __init__(
         self,
@@ -124,26 +118,50 @@ class AODPNatsConsumer:
         self._client = None
         self._subscription = None
         self.messages_received = 0
+        self.orders_parsed = 0
         self.orders_saved = 0
         self.invalid_messages = 0
         self.connection_attempts = 0
+        self.reconnect_count = 0
+        self.subscription_active = False
         self.last_message_at: str | None = None
+        self.last_successful_persistence: str | None = None
+        self.last_error: str | None = None
 
     async def _handle_message(self, message) -> None:
         self.messages_received += 1
         self.last_message_at = utc_now()
         try:
             orders = self.adapter.normalize(message.data, server=self.server)
+            self.orders_parsed += len(orders)
+            saved = 0
             for order in orders:
                 self.database.upsert_liquidity_order(order)
-            self.orders_saved += len(orders)
+                saved += 1
+            self.orders_saved += saved
+            if saved:
+                self.last_successful_persistence = utc_now()
         except Exception as exc:
             self.invalid_messages += 1
+            self.last_error = f"{type(exc).__name__}: {exc}"
             logger.warning("AODP NATS message failed for %s: %s", self.server, exc)
             if self.on_message_error is not None:
                 result = self.on_message_error(exc)
                 if asyncio.iscoroutine(result):
                     await result
+
+    async def _on_reconnected(self, *_args) -> None:
+        self.reconnect_count += 1
+        self.subscription_active = True
+        logger.info("AODP NATS reconnected for %s", self.server)
+
+    async def _on_disconnected(self, *_args) -> None:
+        self.subscription_active = False
+        logger.warning("AODP NATS disconnected for %s", self.server)
+
+    async def _on_error(self, error) -> None:
+        self.last_error = f"{type(error).__name__}: {error}"
+        logger.warning("AODP NATS error for %s: %s", self.server, error)
 
     async def _connect_once(self) -> None:
         try:
@@ -155,9 +173,14 @@ class AODPNatsConsumer:
             servers=[self.nats_url],
             reconnect_time_wait=1,
             max_reconnect_attempts=-1,
+            reconnected_cb=self._on_reconnected,
+            disconnected_cb=self._on_disconnected,
+            error_cb=self._on_error,
         )
         self._subscription = await self._client.subscribe(self.subject, cb=self._handle_message)
         await self._client.flush()
+        self.subscription_active = True
+        self.last_error = None
 
     async def run_forever(self) -> None:
         delay = self.reconnect_base_seconds
@@ -172,6 +195,7 @@ class AODPNatsConsumer:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                self.last_error = f"{type(exc).__name__}: {exc}"
                 logger.warning("AODP NATS connection failed for %s: %s", self.server, exc)
             finally:
                 await self._disconnect()
@@ -188,6 +212,7 @@ class AODPNatsConsumer:
         await self._disconnect()
 
     async def _disconnect(self) -> None:
+        self.subscription_active = False
         if self._subscription is not None:
             try:
                 await self._subscription.unsubscribe()
