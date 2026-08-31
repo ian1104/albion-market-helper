@@ -26,6 +26,24 @@ buy_price_max INTEGER, buy_price_max_date TEXT,
 );
 CREATE INDEX IF NOT EXISTS idx_market_price_history_lookup
 ON market_price_history(server, item_id, city, quality, recorded_at);
+CREATE TABLE IF NOT EXISTS market_liquidity_orders (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ source TEXT NOT NULL,
+ server TEXT NOT NULL,
+ order_id TEXT,
+ item_id TEXT NOT NULL,
+ city TEXT NOT NULL,
+ quality INTEGER NOT NULL,
+ side TEXT NOT NULL,
+ price REAL NOT NULL,
+ quantity REAL NOT NULL,
+ expires_at TEXT,
+ observed_at TEXT NOT NULL,
+ source_timestamp TEXT,
+ UNIQUE(source, server, order_id)
+);
+CREATE INDEX IF NOT EXISTS idx_market_liquidity_lookup
+ON market_liquidity_orders(server, item_id, city, quality, side, price, observed_at);
 CREATE TABLE IF NOT EXISTS collection_runs (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  server TEXT NOT NULL DEFAULT 'east',
@@ -86,6 +104,36 @@ class Database:
         if "market_price_history" in tables:
             connection.execute("DROP INDEX IF EXISTS idx_market_price_history_lookup")
             connection.execute("CREATE INDEX idx_market_price_history_lookup ON market_price_history(server, item_id, city, quality, recorded_at)")
+
+    def upsert_liquidity_order(self, order):
+        self.initialize()
+        with self.connect() as connection:
+            if order.order_id is not None:
+                connection.execute("""INSERT INTO market_liquidity_orders
+                    (source,server,order_id,item_id,city,quality,side,price,quantity,expires_at,observed_at,source_timestamp)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(source,server,order_id) DO UPDATE SET
+                    item_id=excluded.item_id, city=excluded.city, quality=excluded.quality, side=excluded.side,
+                    price=excluded.price, quantity=excluded.quantity, expires_at=excluded.expires_at,
+                    observed_at=excluded.observed_at, source_timestamp=excluded.source_timestamp""",
+                    (order.source,order.server,order.order_id,order.item_id,order.city,order.quality,order.side,order.price,order.quantity,order.expires_at,order.observed_at,order.source_timestamp))
+            else:
+                connection.execute("""INSERT INTO market_liquidity_orders
+                    (source,server,order_id,item_id,city,quality,side,price,quantity,expires_at,observed_at,source_timestamp)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (order.source,order.server,None,order.item_id,order.city,order.quality,order.side,order.price,order.quantity,order.expires_at,order.observed_at,order.source_timestamp))
+
+    def liquidity_orders(self, *, server, item_id, city, quality, side=None, observed_after=None):
+        self.initialize()
+        clauses=["server=?", "item_id=?", "city=?", "quality=?"]
+        params=[server,item_id,city,quality]
+        if side is not None:
+            clauses.append("side=?"); params.append(side)
+        if observed_after is not None:
+            clauses.append("observed_at>=?"); params.append(observed_after)
+        with self.connect() as connection:
+            rows=connection.execute(f"SELECT * FROM market_liquidity_orders WHERE {' AND '.join(clauses)} ORDER BY price", params).fetchall()
+            return [dict(row) for row in rows]
 
     def upsert_current(self, record: dict[str, Any]):
         self.initialize()
