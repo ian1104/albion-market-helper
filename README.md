@@ -4,75 +4,55 @@ Backend-first Albion Online market analysis project targeting Asia/East by defau
 
 ## Current pipeline
 
-AODP → AlbionApiService → Collector → SQLite → AnalysisService → ArbitrageService → FastAPI → React
+AODP → AlbionApiService / AODPNatsAdapter → normalized market data → SQLite → AnalysisService / Liquidity → StrategyEngine → FastAPI → React
 
-The project currently supports current prices, append-only historical snapshots, price statistics/trend/spread analysis, arbitrage opportunities, configurable gross/net profit calculations, data freshness, and a liquidity-aware execution model.
+The project supports current prices, append-only historical snapshots, price statistics/trend/spread analysis, arbitrage opportunities, configurable gross/net profit calculations, data freshness, and a liquidity-aware execution model.
 
-## Phase 5: Liquidity and execution model
+## Data integrity policy
 
-- **Liquidity:** represented through a provider/adapter boundary. The current AODP price snapshot does not provide order quantity or full order-book depth, so the default provider reports liquidity as unavailable.
-- **Executable Quantity:** when a real liquidity source supplies both buy-side and sell-side quantities, execution is limited to the requested quantity and both available quantities.
-- **Slippage:** when real order-book depth is supplied, weighted execution prices and buy/sell slippage can be calculated. No depth is synthesized from price snapshots.
-- **Realistic Profit:** calculated only when executable quantity is actually available; depth-aware execution prices are used when available. Otherwise the result is explicitly unavailable.
-- **Confidence:** combines freshness, historical sufficiency, and liquidity availability without treating unknown data as zero.
-- **Data Availability:** responses distinguish unavailable liquidity from zero liquidity and insufficient historical data.
+**AODP current price snapshots are never used to infer actual trading volume, order quantity, or order-book depth.** Missing liquidity is represented as unavailable rather than fabricated or converted to zero. NATS liquidity is observational: only orders actually received and persisted are used.
 
-### Data integrity policy
+## Phase 5–7: Liquidity and order lifecycle
 
-**AODP current price snapshots are never used to infer actual trading volume, order quantity, or order-book depth.** Missing liquidity is represented as unavailable rather than fabricated or converted to zero.
+- Liquidity is behind a provider/adapter boundary. `DatabaseLiquidityProvider` reads recent normalized AODP market orders.
+- Executable quantity is limited by requested quantity and both sides' real available quantities.
+- Weighted execution prices and slippage use actual order-depth levels only.
+- Orders track provenance, first/last seen, expiry and observational lifecycle state (`ACTIVE`, `EXPIRED`, `STALE`, `UNKNOWN`). `STALE` and `EXPIRED` do not mean SOLD.
+- Historical order observations are retained separately from current order state.
+- NATS ingestion is opt-in and server-isolated for canonical `east`, `west`, and `europe`.
 
-## Configuration
+## Phase 8: External source and business architecture preparation
 
-Configuration is centralized in `config.py`. Environment variables can select the server, AODP timeout/retry behavior, collection interval, watchlist, cities, qualities, database path, and freshness threshold.
+AODP public NATS `marketorders.deduped` is the selected external liquidity source. The adapter layer keeps source-specific protocol handling separate from analysis and strategy logic.
+
+## Phase 10: Business Strategy Integration
+
+The strategy layer is now executable rather than metadata-only:
+
+- `StrategyDefinition` describes a strategy and its data/input requirements.
+- `BusinessStrategy` defines the common `evaluate(**inputs)` contract.
+- `StrategyRegistry` discovers independent strategy implementations.
+- `ArbitrageStrategy` adapts the existing `ArbitrageService`; arbitrage calculations are not duplicated.
+- `BusinessOpportunity` is strategy-neutral and carries required/available capital, capital utilization, expected revenue/cost/profit, ROI, risk, liquidity, confidence and freshness.
+- `StrategyEngine` applies capital/risk filters and ranking without knowing strategy-specific calculation details.
+- `/api/strategies`, `/api/strategies/{strategy_id}`, and `/api/opportunities` expose discovery and normalized opportunities.
+
+### Dashboard policy
+
+The React home screen is a dashboard shell around normalized strategy opportunities. It accepts user-provided capital, risk and ranking preferences and does not fabricate results for unimplemented strategies. Current implemented strategy output is arbitrage only. Crafting, refining, transport, gathering, and other strategies must be added as independent strategy modules with real calculation inputs before they can produce opportunities.
+
+The canonical server IDs remain `east`, `west`, and `europe`; `east` may be displayed as `Asia / East`. Servers, item IDs, cities and profitability results are data/configuration inputs rather than strategy constants.
 
 ## API
 
-Core market endpoints remain under `/api/market/*`. Arbitrage endpoints remain:
+Existing market and arbitrage endpoints remain compatible. Strategy endpoints:
 
-- `GET /api/arbitrage`
-- `GET /api/arbitrage/opportunities`
-- `GET /api/arbitrage/calculate`
-- `GET /api/arbitrage/liquidity`
+- `GET /api/strategies`
+- `GET /api/strategies/{strategy_id}`
+- `GET /api/opportunities?server=east&capital=...&strategy=arbitrage&sort=profit`
 
-Arbitrage responses include gross opportunity fields plus liquidity, executable quantity, slippage, realistic-profit availability, confidence, freshness, and data-availability status.
+Business calculations remain in backend services. The frontend displays backend results and does not reproduce profit calculations.
 
-## Development validation
+## Validation policy
 
-Python tests use fixtures/mocks and do not insert synthetic market data into the production database. Live AODP connectivity is tested separately from parser and engine tests.
-
-## Phase 6: External liquidity source
-
-The selected external liquidity source is the Albion Online Data Project (AODP) public NATS market-order stream, `marketorders.deduped`. AODP documents public NATS endpoints for Americas/West, Asia/East, and Europe. Its market-order messages contain individual orders including item, location, quality, unit price, amount, auction type, order ID, and expiry.
-
-The project normalizes those messages through `MarketDataAdapter` / `AODPNatsAdapter` and persists them as provenance-aware `market_liquidity_orders` records. `DatabaseLiquidityProvider` converts real sell offers and buy requests into execution depth for the existing arbitrage engine. No quantity, volume, or order depth is inferred from AODP price snapshots.
-
-AODP market-order data is observational rather than a guaranteed complete order book: the AODP client uploads orders that users actually load in-game, and subscribers can miss earlier messages. Therefore liquidity is only treated as available when recent normalized order data exists; otherwise it remains unavailable.
-
-NATS ingestion is opt-in through `AODP_NATS_ENABLED`. The adapter and tests are network-independent; live NATS access is validated separately.
-
-## Phase 7: Live liquidity ingestion and order lifecycle
-
-- **Persistent ingestion:** `AODPNatsConsumer` maintains a long-lived application subscription to `marketorders.deduped`, handles reconnects with exponential backoff, isolates malformed messages, and shuts down cleanly. This is a persistent application consumer, not a JetStream durable consumer; new subscribers can miss earlier public-stream messages.
-- **Order identity:** current order state is keyed by `(source, server, order_id)` where an AODP order ID is available. Repeated observations update the current record rather than creating duplicate current rows.
-- **Observation history:** every normalized observation is appended to `market_liquidity_order_observations` so price/quantity changes and last-seen history are not lost when current state is updated.
-- **Lifecycle:** orders track `first_seen`, `last_seen`, `expires_at`, and `status` (`ACTIVE`, `EXPIRED`, `STALE`, `UNKNOWN`). Expiry and stale thresholds are configuration-driven. Lifecycle state is observational and is not proof of an in-game fill/completion event.
-- **Current liquidity:** the liquidity provider consumes only current active orders. Expired and stale orders are excluded.
-- **Server isolation:** NATS subscriptions, order identity, lifecycle queries, and liquidity queries retain the canonical server dimension (`east`, `west`, `europe`). Additional servers can be added through configuration/source metadata.
-- **Production data policy:** fixtures remain test-only. AODP current-price snapshots are never used to invent order quantity, volume, or depth.
-
-The AODP developer documentation states that `marketorders.deduped` contains deduplicated market orders, that new subscribers can miss earlier messages, and recommends tracking an order's last-seen time before treating an unseen order as probably completed.
-
-## Phase 8: Live validation and business strategy architecture
-
-Phase 8 does not replace the existing arbitrage implementation. It adds a strategy-neutral architecture boundary in `services/business_strategy.py`:
-
-- `StrategyDefinition` describes a strategy's required data, inputs, calculator key, risk, capital, liquidity, time horizon, and server/location scope.
-- `BusinessOpportunity` is a strategy-neutral result contract so arbitrage, crafting, refining, transport, flipping, and future strategies can be compared by a common dashboard layer.
-- `StrategyRegistry` provides independent registration/discovery rather than a growing `if/elif` block in FastAPI.
-- The existing arbitrage calculation remains in `ArbitrageService`; the registry references it with `calculator_key="arbitrage_service"` and does not duplicate business logic.
-
-No profitability claims for future strategies are made by this architecture. New strategy modules should consume normalized market/analysis data rather than calling AODP directly.
-
-### Live-data policy
-
-Live AODP validation is separate from fixture tests. A successful parser or fixture test does not imply live connectivity. AODP public NATS is observational market data, and the project's liquidity calculations only use orders actually received and persisted; missing observations are not treated as proof of completed orders.
+Python tests use fixtures/mocks and do not insert synthetic market data into the production database. Live AODP connectivity is tested separately. A fixture PASS is never a LIVE PASS, and code inspection is not runtime verification.
