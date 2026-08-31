@@ -3,7 +3,7 @@ from __future__ import annotations
 from threading import Lock
 from time import monotonic, sleep
 
-from config import AODP_REQUEST_DELAY_SECONDS, CITIES, QUALITIES, WATCHLIST
+from config import AODP_REQUEST_DELAY_SECONDS, ALBION_SERVER, CITIES, QUALITIES, WATCHLIST
 from services.albion_api import AlbionApiService
 from services.market_service import MarketService, utc_now
 
@@ -11,13 +11,14 @@ from services.market_service import MarketService, utc_now
 class Collector:
     def __init__(self, api: AlbionApiService, market_service: MarketService,
                  watchlist=WATCHLIST, cities=CITIES, qualities=QUALITIES,
-                 request_delay: float = AODP_REQUEST_DELAY_SECONDS):
+                 request_delay: float = AODP_REQUEST_DELAY_SECONDS, server: str = ALBION_SERVER):
         self.api = api
         self.market_service = market_service
         self.watchlist = tuple(watchlist)
         self.cities = tuple(cities)
         self.qualities = tuple(qualities)
         self.request_delay = request_delay
+        self.server = server
         self._lock = Lock()
 
     def run(self) -> dict:
@@ -25,7 +26,7 @@ class Collector:
             return {"success": False, "skipped": True, "error": "collection already running"}
         started = utc_now()
         started_monotonic = monotonic()
-        run_id = self.market_service.database.start_collection_run(started)
+        run_id = self.market_service.database.start_collection_run(started, self.server)
         received = saved = 0
         try:
             batches = self._batches()

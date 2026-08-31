@@ -16,6 +16,8 @@ from services.albion_api import (
 from services.collector import Collector
 from services.market_service import MarketService
 from services.scheduler import CollectorScheduler
+from services.analysis_service import AnalysisService, RANGES
+from config import ALBION_SERVER, SUPPORTED_SERVERS
 
 
 database = Database()
@@ -65,14 +67,14 @@ def root() -> dict[str, str]:
 
 @app.get("/api/market/prices")
 def prices(item_id: str | None = None, city: str | None = None,
-           quality: int | None = Query(None, ge=1)) -> list[dict[str, Any]]:
-    return database.current_prices(item_id, city, quality)
+           quality: int | None = Query(None, ge=1), server: str = ALBION_SERVER) -> list[dict[str, Any]]:
+    return database.current_prices(item_id, city, quality, server=server)
 
 
 @app.get("/api/market/history")
 def history(item_id: str | None = None, city: str | None = None,
             quality: int | None = Query(None, ge=1), start: str | None = None,
-            end: str | None = None) -> list[dict[str, Any]]:
+            end: str | None = None, server: str = ALBION_SERVER) -> list[dict[str, Any]]:
     if start and end:
         try:
             start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
@@ -85,7 +87,7 @@ def history(item_id: str | None = None, city: str | None = None,
             end_dt = end_dt.replace(tzinfo=timezone.utc)
         if start_dt > end_dt:
             raise HTTPException(400, "start must not be later than end")
-    return database.history(item_id, city, quality, start, end)
+    return database.history(item_id, city, quality, start, end, server=server)
 
 
 @app.post("/api/market/fetch")
@@ -108,4 +110,86 @@ def run_collector() -> dict[str, Any]:
 
 @app.get("/api/collector/status")
 def collector_status() -> dict[str, Any]:
-    return {"running": collector._lock.locked(), "last_collection": database.latest_collection_run()}
+    return {"server": collector.server, "running": collector._lock.locked(), "last_collection": database.latest_collection_run(collector.server)}
+
+
+def _analysis_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, ValueError):
+        return HTTPException(400, str(exc))
+    return HTTPException(500, "Analysis error")
+
+
+def _validate_server(server: str):
+    if server not in SUPPORTED_SERVERS:
+        raise HTTPException(400, "server must be one of: east, west, europe")
+
+
+def _validate_range(range_name: str):
+    if range_name not in RANGES:
+        raise HTTPException(400, "range must be one of: 12h, 24h, 7d, 30d, all")
+
+
+@app.get("/api/market/stats")
+def market_stats(item_id: str = Query(..., min_length=1), city: str = Query(..., min_length=1),
+                 quality: int = Query(..., ge=1), range: str = Query("24h"),
+                 start: str | None = None, end: str | None = None, server: str = ALBION_SERVER):
+    _validate_server(server)
+    _validate_range(range)
+    try:
+        return AnalysisService(database, server).statistics(item_id, city, quality, range, start, end)
+    except Exception as exc:
+        raise _analysis_error(exc)
+
+
+@app.get("/api/market/quality")
+def market_quality(range: str = Query("all"), start: str | None = None, end: str | None = None,
+                   server: str = ALBION_SERVER):
+    _validate_server(server)
+    _validate_range(range)
+    try:
+        return AnalysisService(database, server).quality(range, start, end)
+    except Exception as exc:
+        raise _analysis_error(exc)
+
+
+@app.get("/api/market/analysis")
+def market_analysis(item_id: str = Query(..., min_length=1), city: str = Query(..., min_length=1),
+                    quality: int = Query(..., ge=1), range: str = Query("24h"),
+                    start: str | None = None, end: str | None = None, server: str = ALBION_SERVER):
+    _validate_server(server)
+    _validate_range(range)
+    try:
+        service = AnalysisService(database, server)
+        result = service.statistics(item_id, city, quality, range, start, end)
+        trend = service.trend(item_id, city, quality, range, start=start, end=end)
+        result["trend"] = {"statistics": trend["statistics"], "series": trend["series"]}
+        return result
+    except Exception as exc:
+        raise _analysis_error(exc)
+
+
+@app.get("/api/market/trend")
+def market_trend(item_id: str = Query(..., min_length=1), city: str = Query(..., min_length=1),
+                quality: int = Query(..., ge=1), range: str = Query("24h"),
+                start: str | None = None, end: str | None = None, server: str = ALBION_SERVER):
+    _validate_server(server)
+    _validate_range(range)
+    try:
+        return AnalysisService(database, server).trend(item_id, city, quality, range, start=start, end=end)
+    except Exception as exc:
+        raise _analysis_error(exc)
+
+
+@app.get("/api/market/spread")
+def market_spread(item_id: str = Query(..., min_length=1), quality: int = Query(..., ge=1),
+                 range: str = Query("24h"), start: str | None = None, end: str | None = None,
+                 server: str = ALBION_SERVER):
+    _validate_server(server)
+    _validate_range(range)
+    try:
+        service = AnalysisService(database, server)
+        result = service.spread(item_id, quality, range, start, end)
+        result["stability"] = service.spread_stability(item_id, quality, range, start, end)
+        return result
+    except Exception as exc:
+        raise _analysis_error(exc)

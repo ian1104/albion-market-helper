@@ -171,7 +171,7 @@ class AlbionApiService:
                 raise AODPTimeoutError("AODP request timed out") from exc
             except httpx.ConnectError as exc:
                 message = str(exc).lower()
-                if "name or service not known" in message or "nodename" in message or "getaddrinfo" in message:
+                if "name or service not known" in message or "nodename" in message or "getaddrinfo" in message or "temporary failure in name resolution" in message or "failed to resolve" in message:
                     raise AODPDNSError("AODP DNS resolution failed") from exc
                 if attempt < self.retry_count:
                     self.sleeper(self.retry_backoff * (2**attempt))

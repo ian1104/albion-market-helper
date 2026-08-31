@@ -4,28 +4,31 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from config import DATABASE_PATH
+from config import ALBION_SERVER, DATABASE_PATH
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS market_prices (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
+ server TEXT NOT NULL DEFAULT 'east',
  item_id TEXT NOT NULL, city TEXT NOT NULL, quality INTEGER NOT NULL,
  sell_price_min INTEGER, sell_price_min_date TEXT,
  buy_price_max INTEGER, buy_price_max_date TEXT,
  updated_at TEXT NOT NULL,
- UNIQUE(item_id, city, quality)
+ UNIQUE(server, item_id, city, quality)
 );
 CREATE TABLE IF NOT EXISTS market_price_history (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
+ server TEXT NOT NULL DEFAULT 'east',
  item_id TEXT NOT NULL, city TEXT NOT NULL, quality INTEGER NOT NULL,
  sell_price_min INTEGER, sell_price_min_date TEXT,
- buy_price_max INTEGER, buy_price_max_date TEXT,
+buy_price_max INTEGER, buy_price_max_date TEXT,
  recorded_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_market_price_history_lookup
-ON market_price_history(item_id, city, quality, recorded_at);
+ON market_price_history(server, item_id, city, quality, recorded_at);
 CREATE TABLE IF NOT EXISTS collection_runs (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
+ server TEXT NOT NULL DEFAULT 'east',
  started_at TEXT NOT NULL,
  finished_at TEXT,
  success INTEGER NOT NULL DEFAULT 0,
@@ -49,96 +52,108 @@ class Database:
 
     def initialize(self):
         with self.connect() as connection:
+            self._migrate(connection)
             connection.executescript(SCHEMA)
+
+    @staticmethod
+    def _columns(connection, table: str) -> set[str]:
+        return {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+
+    def _migrate(self, connection):
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "market_prices" in tables and "server" not in self._columns(connection, "market_prices"):
+            connection.execute("ALTER TABLE market_prices RENAME TO market_prices_legacy")
+            connection.executescript("""
+                CREATE TABLE market_prices (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    server TEXT NOT NULL DEFAULT 'east',
+                    item_id TEXT NOT NULL, city TEXT NOT NULL, quality INTEGER NOT NULL,
+                    sell_price_min INTEGER, sell_price_min_date TEXT,
+                    buy_price_max INTEGER, buy_price_max_date TEXT,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(server, item_id, city, quality)
+                );
+            """)
+            connection.execute("""INSERT INTO market_prices
+                (id,server,item_id,city,quality,sell_price_min,sell_price_min_date,buy_price_max,buy_price_max_date,updated_at)
+                SELECT id, ?, item_id,city,quality,sell_price_min,sell_price_min_date,buy_price_max,buy_price_max_date,updated_at
+                FROM market_prices_legacy""", (ALBION_SERVER,))
+            connection.execute("DROP TABLE market_prices_legacy")
+        if "market_price_history" in tables and "server" not in self._columns(connection, "market_price_history"):
+            connection.execute(f"ALTER TABLE market_price_history ADD COLUMN server TEXT NOT NULL DEFAULT '{ALBION_SERVER}'")
+        if "collection_runs" in tables and "server" not in self._columns(connection, "collection_runs"):
+            connection.execute(f"ALTER TABLE collection_runs ADD COLUMN server TEXT NOT NULL DEFAULT '{ALBION_SERVER}'")
+        if "market_price_history" in tables:
+            connection.execute("DROP INDEX IF EXISTS idx_market_price_history_lookup")
+            connection.execute("CREATE INDEX idx_market_price_history_lookup ON market_price_history(server, item_id, city, quality, recorded_at)")
 
     def upsert_current(self, record: dict[str, Any]):
         self.initialize()
         with self.connect() as connection:
-            connection.execute(
-                """INSERT INTO market_prices(item_id,city,quality,sell_price_min,sell_price_min_date,buy_price_max,buy_price_max_date,updated_at)
-                VALUES(?,?,?,?,?,?,?,?)
-                ON CONFLICT(item_id,city,quality) DO UPDATE SET
+            connection.execute("""INSERT INTO market_prices
+                (server,item_id,city,quality,sell_price_min,sell_price_min_date,buy_price_max,buy_price_max_date,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(server,item_id,city,quality) DO UPDATE SET
                 sell_price_min=excluded.sell_price_min,
                 sell_price_min_date=excluded.sell_price_min_date,
                 buy_price_max=excluded.buy_price_max,
                 buy_price_max_date=excluded.buy_price_max_date,
-                updated_at=excluded.updated_at""",
-                self._values(record, "updated_at"),
-            )
+                updated_at=excluded.updated_at""", self._values(record, "updated_at"))
 
     def insert_history(self, record: dict[str, Any]):
         self.initialize()
         with self.connect() as connection:
-            connection.execute(
-                """INSERT INTO market_price_history(item_id,city,quality,sell_price_min,sell_price_min_date,buy_price_max,buy_price_max_date,recorded_at)
-                VALUES(?,?,?,?,?,?,?,?)""",
-                self._values(record, "recorded_at"),
-            )
+            connection.execute("""INSERT INTO market_price_history
+                (server,item_id,city,quality,sell_price_min,sell_price_min_date,buy_price_max,buy_price_max_date,recorded_at)
+                VALUES(?,?,?,?,?,?,?,?,?)""", self._values(record, "recorded_at"))
 
     @staticmethod
     def _values(record: dict[str, Any], timestamp_field: str):
-        return (
-            record["item_id"], record["city"], record["quality"],
-            record.get("sell_price_min"), record.get("sell_price_min_date"),
-            record.get("buy_price_max"), record.get("buy_price_max_date"),
-            record[timestamp_field],
-        )
+        return (record.get("server", ALBION_SERVER), record["item_id"], record["city"], record["quality"],
+                record.get("sell_price_min"), record.get("sell_price_min_date"),
+                record.get("buy_price_max"), record.get("buy_price_max_date"), record[timestamp_field])
 
-    def current_prices(self, item_id=None, city=None, quality=None):
-        return self._query("market_prices", item_id, city, quality)
+    def current_prices(self, item_id=None, city=None, quality=None, server=ALBION_SERVER):
+        return self._query("market_prices", item_id, city, quality, server)
 
-    def history(self, item_id=None, city=None, quality=None, start=None, end=None):
+    def history(self, item_id=None, city=None, quality=None, start=None, end=None, server=ALBION_SERVER):
         self.initialize()
-        clauses, params = [], []
+        clauses, params = ["server = ?"], [server]
         for column, value in (("item_id", item_id), ("city", city), ("quality", quality)):
-            if value is not None:
-                clauses.append(f"{column} = ?")
-                params.append(value)
-        if start is not None:
-            clauses.append("recorded_at >= ?")
-            params.append(start)
-        if end is not None:
-            clauses.append("recorded_at <= ?")
-            params.append(end)
-        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+            if value is not None: clauses.append(f"{column} = ?"); params.append(value)
+        if start is not None: clauses.append("recorded_at >= ?"); params.append(start)
+        if end is not None: clauses.append("recorded_at <= ?"); params.append(end)
         with self.connect() as connection:
-            return [dict(row) for row in connection.execute(
-                f"SELECT * FROM market_price_history{where} ORDER BY recorded_at,id", params
-            )]
+            return [dict(r) for r in connection.execute(f"SELECT * FROM market_price_history WHERE {' AND '.join(clauses)} ORDER BY recorded_at,id", params)]
 
-    def _query(self, table, item_id, city, quality):
+    def _query(self, table, item_id, city, quality, server=ALBION_SERVER):
         self.initialize()
-        clauses, params = [], []
+        clauses, params = ["server = ?"], [server]
         for column, value in (("item_id", item_id), ("city", city), ("quality", quality)):
-            if value is not None:
-                clauses.append(f"{column} = ?")
-                params.append(value)
-        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+            if value is not None: clauses.append(f"{column} = ?"); params.append(value)
         with self.connect() as connection:
-            return [dict(row) for row in connection.execute(
-                f"SELECT * FROM {table}{where} ORDER BY item_id,city,quality", params
-            )]
+            return [dict(r) for r in connection.execute(f"SELECT * FROM {table} WHERE {' AND '.join(clauses)} ORDER BY item_id,city,quality", params)]
 
-    def start_collection_run(self, started_at: str) -> int:
+    def start_collection_run(self, started_at: str, server: str = ALBION_SERVER) -> int:
         self.initialize()
         with self.connect() as connection:
-            cursor = connection.execute(
-                "INSERT INTO collection_runs(started_at) VALUES(?)", (started_at,)
-            )
-            return int(cursor.lastrowid)
+            return int(connection.execute("INSERT INTO collection_runs(server,started_at) VALUES(?,?)", (server, started_at)).lastrowid)
 
-    def finish_collection_run(self, run_id: int, *, finished_at: str, success: bool,
-                              records_received: int, records_saved: int, error: str | None,
-                              duration_seconds: float):
+    def finish_collection_run(self, run_id: int, *, finished_at: str, success: bool, records_received: int, records_saved: int, error: str | None, duration_seconds: float):
         self.initialize()
         with self.connect() as connection:
-            connection.execute(
-                """UPDATE collection_runs SET finished_at=?, success=?, records_received=?, records_saved=?, error=?, duration_seconds=? WHERE id=?""",
-                (finished_at, int(success), records_received, records_saved, error, duration_seconds, run_id),
-            )
+            connection.execute("UPDATE collection_runs SET finished_at=?,success=?,records_received=?,records_saved=?,error=?,duration_seconds=? WHERE id=?", (finished_at,int(success),records_received,records_saved,error,duration_seconds,run_id))
 
-    def latest_collection_run(self):
+    def latest_collection_run(self, server: str = ALBION_SERVER):
         self.initialize()
         with self.connect() as connection:
-            row = connection.execute("SELECT * FROM collection_runs ORDER BY id DESC LIMIT 1").fetchone()
+            row = connection.execute("SELECT * FROM collection_runs WHERE server=? ORDER BY id DESC LIMIT 1", (server,)).fetchone()
             return dict(row) if row else None
+
+    def collection_runs(self, server=ALBION_SERVER, start=None, end=None):
+        self.initialize()
+        clauses, params = ["server = ?"], [server]
+        if start is not None: clauses.append("started_at >= ?"); params.append(start)
+        if end is not None: clauses.append("started_at <= ?"); params.append(end)
+        with self.connect() as connection:
+            return [dict(r) for r in connection.execute(f"SELECT * FROM collection_runs WHERE {' AND '.join(clauses)} ORDER BY started_at,id", params)]
