@@ -23,6 +23,7 @@ from services.analysis_service import AnalysisService, RANGES
 from services.arbitrage_service import ArbitrageService, CostModel
 from services.business_strategy import default_strategy_registry
 from services.strategy_engine import StrategyEngine
+from services.item_metadata import ItemMetadataService
 from config import (
     ALBION_SERVER, AODP_NATS_ENABLED, AODP_NATS_HOST, AODP_NATS_PORTS, AODP_NATS_SUBJECT,
     AODP_NATS_SERVERS, AODP_NATS_STALE_MINUTES, SERVER_DISPLAY_NAMES, SUPPORTED_SERVERS,
@@ -35,6 +36,7 @@ albion_api = AlbionApiService()
 collector = Collector(albion_api, market_service)
 scheduler = CollectorScheduler(collector)
 lifecycle_manager = OrderLifecycleManager(database, stale_minutes=AODP_NATS_STALE_MINUTES)
+item_metadata = ItemMetadataService()
 nats_consumers: dict[str, AODPNatsConsumer] = {}
 nats_tasks: dict[str, Any] = {}
 
@@ -420,3 +422,54 @@ def opportunities(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"server": server, "capital": capital, "strategy": strategy, "sort": sort, "opportunities": [item.to_dict() for item in result]}
+
+
+@app.get("/api/items")
+def items(query: str | None = Query(None), tier: int | None = Query(None, ge=1, le=8),
+          category: str | None = None, enchantment: int | None = Query(None, ge=0, le=4),
+          limit: int = Query(30, ge=1, le=100)) -> dict[str, Any]:
+    results = item_metadata.search(query, tier=tier, category=category, enchantment=enchantment, limit=limit)
+    return {
+        "items": [item.to_dict() for item in results],
+        "count": len(results),
+        "available": item_metadata.last_error is None,
+        "source": "ao-bin-dumps",
+        "error": item_metadata.last_error,
+    }
+
+
+@app.get("/api/items/{item_id}")
+def item(item_id: str) -> dict[str, Any]:
+    metadata = item_metadata.get(item_id)
+    if metadata is None:
+        detail = item_metadata.last_error or "item metadata not found"
+        raise HTTPException(404, detail)
+    return {"item": metadata.to_dict()}
+
+
+@app.get("/api/items/{item_id}/market")
+def item_market(item_id: str, server: str = ALBION_SERVER, quality: int = Query(1, ge=1)) -> dict[str, Any]:
+    _validate_server(server)
+    rows = database.current_prices(item_id, None, quality, server=server)
+    return {"server": server, "item_id": item_id, "quality": quality, "cities": rows, "data_available": bool(rows)}
+
+
+@app.get("/api/items/{item_id}/history")
+def item_history(item_id: str, server: str = ALBION_SERVER, quality: int = Query(1, ge=1),
+                 city: str | None = None, start: str | None = None, end: str | None = None) -> dict[str, Any]:
+    _validate_server(server)
+    rows = database.history(item_id, city, quality, start, end, server=server)
+    return {"server": server, "item_id": item_id, "quality": quality, "city": city, "history": rows, "data_available": bool(rows)}
+
+
+@app.get("/api/items/{item_id}/opportunities")
+def item_opportunities(item_id: str, server: str = ALBION_SERVER, limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
+    _validate_server(server)
+    try:
+        result = strategy_engine.evaluate(strategy_id=None, capital=None, risk=None, sort="profit", limit=limit,
+                                          server=server, item_id=item_id, quality=1, quantity=1,
+                                          cost_model=_cost_model(0, 0, 0, 0, 0, False),
+                                          freshness_max_age_minutes=30.0)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"server": server, "item_id": item_id, "opportunities": [item.to_dict() for item in result]}
