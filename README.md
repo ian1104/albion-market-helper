@@ -50,7 +50,6 @@ AODP market-order data is observational rather than a guaranteed complete order 
 
 NATS ingestion is opt-in through `AODP_NATS_ENABLED`. The adapter and tests are network-independent; live NATS access is validated separately.
 
-
 ## Phase 7: Live liquidity ingestion and order lifecycle
 
 - **Persistent ingestion:** `AODPNatsConsumer` maintains a long-lived application subscription to `marketorders.deduped`, handles reconnects with exponential backoff, isolates malformed messages, and shuts down cleanly. This is a persistent application consumer, not a JetStream durable consumer; new subscribers can miss earlier public-stream messages.
@@ -62,3 +61,18 @@ NATS ingestion is opt-in through `AODP_NATS_ENABLED`. The adapter and tests are 
 - **Production data policy:** fixtures remain test-only. AODP current-price snapshots are never used to invent order quantity, volume, or depth.
 
 The AODP developer documentation states that `marketorders.deduped` contains deduplicated market orders, that new subscribers can miss earlier messages, and recommends tracking an order's last-seen time before treating an unseen order as probably completed.
+
+## Phase 8: Live validation and business strategy architecture
+
+Phase 8 does not replace the existing arbitrage implementation. It adds a strategy-neutral architecture boundary in `services/business_strategy.py`:
+
+- `StrategyDefinition` describes a strategy's required data, inputs, calculator key, risk, capital, liquidity, time horizon, and server/location scope.
+- `BusinessOpportunity` is a strategy-neutral result contract so arbitrage, crafting, refining, transport, flipping, and future strategies can be compared by a common dashboard layer.
+- `StrategyRegistry` provides independent registration/discovery rather than a growing `if/elif` block in FastAPI.
+- The existing arbitrage calculation remains in `ArbitrageService`; the registry references it with `calculator_key="arbitrage_service"` and does not duplicate business logic.
+
+No profitability claims for future strategies are made by this architecture. New strategy modules should consume normalized market/analysis data rather than calling AODP directly.
+
+### Live-data policy
+
+Live AODP validation is separate from fixture tests. A successful parser or fixture test does not imply live connectivity. AODP public NATS is observational market data, and the project's liquidity calculations only use orders actually received and persisted; missing observations are not treated as proof of completed orders.
