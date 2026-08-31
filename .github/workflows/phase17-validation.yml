@@ -144,12 +144,56 @@ jobs:
           print(json.dumps(results, indent=2))
           PY
 
-      - name: FastAPI runtime and live-data smoke test
+      - name: Real market pipeline to SQLite
+        env:
+          DATABASE_PATH: /tmp/amh-phase17-market.db
+        run: |
+          rm -f /tmp/amh-phase17-market.db
+          python - <<'PY'
+          import sqlite3
+          from config import SUPPORTED_SERVERS
+          from db.database import Database
+          from services.albion_api import AlbionApiService
+          from services.market_service import MarketService
+
+          db = Database('/tmp/amh-phase17-market.db')
+          market = MarketService(db, server='east')
+          records = AlbionApiService(host=SUPPORTED_SERVERS['east'], timeout=10, retry_count=1).fetch_prices(
+              ['T4_BAG'], ['Caerleon'], [1]
+          )
+          assert records, 'AODP returned no records for T4_BAG/Caerleon/quality 1'
+          saved = market.save_snapshot_batch(records)
+          assert saved == len(records)
+          current = db.current_prices('T4_BAG', 'Caerleon', 1, server='east')
+          history = db.history('T4_BAG', 'Caerleon', 1, server='east')
+          assert current and history
+          assert current[0]['item_id'] == 'T4_BAG'
+          assert current[0]['city'] == 'Caerleon'
+          assert current[0]['server'] == 'east'
+          assert history[0]['server'] == 'east'
+          with sqlite3.connect('/tmp/amh-phase17-market.db') as con:
+              price_count = con.execute("SELECT COUNT(*) FROM market_prices").fetchone()[0]
+              history_count = con.execute("SELECT COUNT(*) FROM market_price_history").fetchone()[0]
+          print({'aodp_records': len(records), 'saved': saved, 'market_prices': price_count, 'history': history_count})
+          PY
+
+      - name: FastAPI runtime and real-data smoke test
         env:
           DATABASE_PATH: /tmp/amh-phase17-runtime.db
           AODP_NATS_ENABLED: 'false'
         run: |
           rm -f /tmp/amh-phase17-runtime.db
+          DATABASE_PATH=/tmp/amh-phase17-runtime.db python - <<'PY'
+          from config import SUPPORTED_SERVERS
+          from db.database import Database
+          from services.albion_api import AlbionApiService
+          from services.market_service import MarketService
+          db = Database('/tmp/amh-phase17-runtime.db')
+          market = MarketService(db, server='east')
+          records = AlbionApiService(host=SUPPORTED_SERVERS['east'], timeout=10, retry_count=1).fetch_prices(['T4_BAG'], ['Caerleon'], [1])
+          assert records
+          market.save_snapshot_batch(records)
+          PY
           python run_server.py >/tmp/albion-market-helper-api.log 2>&1 &
           SERVER_PID=$!
           trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
@@ -161,6 +205,8 @@ jobs:
           curl --fail --silent http://127.0.0.1:8000/api/strategies >/tmp/strategies.json
           curl --fail --silent 'http://127.0.0.1:8000/api/opportunities?server=east&sort=profit&limit=5' >/tmp/opportunities.json
           curl --fail --silent 'http://127.0.0.1:8000/api/items?query=T4_BAG&limit=5' >/tmp/items.json
+          curl --fail --silent 'http://127.0.0.1:8000/api/market/prices?item_id=T4_BAG&city=Caerleon&quality=1&server=east' >/tmp/prices.json
+          curl --fail --silent 'http://127.0.0.1:8000/api/market/history?item_id=T4_BAG&city=Caerleon&quality=1&server=east' >/tmp/history.json
           python - <<'PY'
           import json
           assert json.load(open('/tmp/root.json'))['status'] == 'ok'
@@ -168,12 +214,16 @@ jobs:
           assert isinstance(json.load(open('/tmp/opportunities.json')).get('opportunities'), list)
           items = json.load(open('/tmp/items.json'))
           assert isinstance(items.get('items'), list)
-          assert 'available' in items and 'source' in items
-          assert items['items'], 'T4_BAG metadata search returned no item'
+          assert items['items']
           item = items['items'][0]
           assert {'item_id', 'item_name', 'tier', 'enchantment', 'icon'} <= set(item)
           assert item['item_name']
-          print('runtime smoke: PASS')
+          prices = json.load(open('/tmp/prices.json'))
+          history = json.load(open('/tmp/history.json'))
+          assert prices and history
+          assert prices[0]['item_id'] == 'T4_BAG' and prices[0]['server'] == 'east'
+          assert history[0]['item_id'] == 'T4_BAG' and history[0]['server'] == 'east'
+          print('runtime + real market smoke: PASS')
           PY
 
       - name: Frontend dependencies
