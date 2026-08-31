@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 import { NAV, SERVER_NAMES } from './constants';
-import { useBusinessData, useMarketData } from './hooks/useBusinessData';
+import { useBusinessData } from './hooks/useBusinessData';
 import { Sidebar, Header, MobileNav } from './components/Layout';
 import { OpportunityDrawer } from './components/common';
 import { DashboardPage, MarketPage, StrategyPage, PortfolioPage, InsightPage, SettingsPage } from './pages';
@@ -26,18 +26,23 @@ function App() {
 
   const setProfile = value => { setProfileState(value); localStorage.setItem('amh-profile', JSON.stringify(value)); };
   const business = useBusinessData({ server, sort, capital, risk, strategy });
-  const market = useMarketData({ ...marketQuery, server });
 
   const state = { server, setServer, names: { ...SERVER_NAMES, ...business.names }, capital, setCapital, risk, setRisk, strategy, setStrategy, sort, setSort, strategies: business.strategies, opportunities: business.opportunities, loading: business.loading, error: business.error };
 
+  const openMarket = itemId => {
+    setSelected(null);
+    setMarketQuery({ itemId, city: '', quality: 1 });
+    setPage('market');
+  };
+
   let content = <DashboardPage state={state} setPage={setPage} open={setSelected}/>;
-  if (page === 'market') content = <MarketPage market={{ ...marketQuery, ...market }} setMarket={setMarketQuery} server={server} load={market.load}/>;
+  if (page === 'market') content = <MarketPage server={server} initialItemId={marketQuery.itemId}/>;
   if (page === 'strategies') content = <StrategyPage strategies={business.strategies}/>;
   if (page === 'portfolio') content = <PortfolioPage profile={profile} setProfile={setProfile}/>;
   if (page === 'insights') content = <InsightPage opportunities={business.opportunities}/>;
   if (page === 'settings') content = <SettingsPage profile={profile} setProfile={setProfile} names={{ ...SERVER_NAMES, ...business.names }}/>;
 
-  return <div className="app-shell"><Sidebar page={page} setPage={setPage}/><div className="main-shell"><Header page={page} refresh={business.refresh} refreshing={business.loading} profile={profile}/><main>{content}</main></div><OpportunityDrawer opportunity={selected} onClose={() => setSelected(null)}/><MobileNav page={page} setPage={setPage}/></div>;
+  return <div className="app-shell"><Sidebar page={page} setPage={setPage}/><div className="main-shell"><Header page={page} refresh={business.refresh} refreshing={business.loading} profile={profile}/><main>{content}</main></div><OpportunityDrawer opportunity={selected} onClose={() => setSelected(null)} onMarket={openMarket}/><MobileNav page={page} setPage={setPage}/></div>;
 }
 
 createRoot(document.getElementById('root')).render(<App/>);
