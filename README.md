@@ -3,4 +3,7 @@
 A personal Albion Online market analysis project.
 
 Current phase:
-Phase 1 — Core Market Data Pipeline
+Phase 2 — AODP Data Collection + Historical Pipeline
+
+Core pipeline:
+AODP → normalization → collector → SQLite current/history → FastAPI → React
