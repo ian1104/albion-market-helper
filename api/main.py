@@ -21,6 +21,8 @@ from services.aodp_nats import AODPNatsAdapter, AODPNatsConsumer
 from services.order_lifecycle import OrderLifecycleManager
 from services.analysis_service import AnalysisService, RANGES
 from services.arbitrage_service import ArbitrageService, CostModel
+from services.business_strategy import default_strategy_registry
+from services.strategy_engine import StrategyEngine
 from config import (
     ALBION_SERVER, AODP_NATS_ENABLED, AODP_NATS_HOST, AODP_NATS_PORTS, AODP_NATS_SUBJECT,
     AODP_NATS_SERVERS, AODP_NATS_STALE_MINUTES, SERVER_DISPLAY_NAMES, SUPPORTED_SERVERS,
@@ -359,3 +361,62 @@ def arbitrage_calculate(
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+
+
+strategy_registry = default_strategy_registry(ArbitrageService(database, ALBION_SERVER))
+strategy_engine = StrategyEngine(strategy_registry)
+
+
+@app.get("/api/strategies")
+def strategies() -> dict[str, Any]:
+    return {"strategies": strategy_engine.definitions()}
+
+
+@app.get("/api/strategies/{strategy_id}")
+def strategy(strategy_id: str) -> dict[str, Any]:
+    definition = strategy_registry.get_definition(strategy_id)
+    if definition is None:
+        raise HTTPException(404, f"unknown strategy: {strategy_id}")
+    return {"strategy": definition.to_dict(), "executable": strategy_registry.get(strategy_id) is not None}
+
+
+@app.get("/api/opportunities")
+def opportunities(
+    strategy: str | None = None,
+    server: str = ALBION_SERVER,
+    capital: float | None = Query(None, gt=0),
+    risk: str | None = None,
+    sort: str = "profit",
+    limit: int = Query(20, ge=1, le=100),
+    item_id: str | None = Query(None, min_length=1),
+    quality: int = Query(1, ge=1),
+    quantity: int = Query(1, ge=1),
+    configured: bool = False,
+    selling_fee: float = Query(0.0, ge=0),
+    transaction_tax: float = Query(0.0, ge=0),
+    transport_cost: float = Query(0.0, ge=0),
+    purchase_fee: float = Query(0.0, ge=0),
+    safety_buffer: float = Query(0.0, ge=0),
+    freshness_max_age_minutes: float = Query(30.0, ge=0),
+) -> dict[str, Any]:
+    _validate_server(server)
+    cost_model = _cost_model(purchase_fee, selling_fee, transaction_tax, transport_cost, safety_buffer, configured)
+    try:
+        result = strategy_engine.evaluate(
+            strategy_id=strategy,
+            capital=capital,
+            risk=risk,
+            sort=sort,
+            limit=limit,
+            server=server,
+            item_id=item_id,
+            quality=quality,
+            quantity=quantity,
+            cost_model=cost_model,
+            freshness_max_age_minutes=freshness_max_age_minutes,
+        )
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"server": server, "capital": capital, "strategy": strategy, "sort": sort, "opportunities": [item.to_dict() for item in result]}
