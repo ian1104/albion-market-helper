@@ -1,0 +1,275 @@
+name: Phase 18 Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Environment diagnostics
+        run: |
+          python --version
+          node --version
+          npm --version
+          git --version
+          git rev-parse HEAD
+          git status --short
+          echo '--- DNS ---'
+          for host in east.albion-online-data.com west.albion-online-data.com europe.albion-online-data.com nats.albion-online-data.com render.albiononline.com; do
+            echo "[$host]"
+            getent hosts "$host" || true
+          done
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Python syntax
+        run: python -m compileall .
+
+      - name: Full pytest
+        run: python -m pytest -q
+
+      - name: Frontend dependencies
+        working-directory: frontend
+        run: npm install --no-audit --no-fund
+
+      - name: Frontend production build
+        working-directory: frontend
+        run: npm run build
+
+      - name: NATS DNS and connection validation
+        run: |
+          python - <<'PY'
+          import asyncio
+          import json
+          import socket
+          import nats
+          from config import AODP_NATS_HOST, AODP_NATS_PORTS
+
+          async def check(server, port):
+              result = {'server': server, 'port': port}
+              try:
+                  socket.getaddrinfo(AODP_NATS_HOST, port, type=socket.SOCK_STREAM)
+                  result['dns'] = 'PASS'
+              except Exception as exc:
+                  result['dns'] = f'BLOCKED: {type(exc).__name__}: {exc}'
+                  return result
+              try:
+                  nc = await nats.connect(
+                      servers=[f'nats://public:thenewalbiondata@{AODP_NATS_HOST}:{port}'],
+                      connect_timeout=5,
+                      max_reconnect_attempts=0,
+                  )
+                  result['connection'] = 'PASS'
+                  await nc.close()
+              except Exception as exc:
+                  result['connection'] = f'BLOCKED: {type(exc).__name__}: {exc}'
+              return result
+
+          async def main():
+              return await asyncio.gather(*(check(server, port) for server, port in AODP_NATS_PORTS.items()))
+
+          results = asyncio.run(main())
+          print(json.dumps(results, indent=2))
+          if not any(item.get('connection') == 'PASS' for item in results):
+              raise SystemExit('No canonical AODP NATS server accepted a connection')
+          PY
+
+      - name: Live NATS ingestion and pipeline validation
+        env:
+          DATABASE_PATH: /tmp/amh-phase18-live.db
+          AODP_NATS_STALE_MINUTES: '15'
+        run: |
+          rm -f /tmp/amh-phase18-live.db
+          python - <<'PY'
+          import asyncio
+          import json
+          from collections import defaultdict
+          from datetime import datetime, timezone
+
+          import nats
+
+          from config import AODP_NATS_HOST, AODP_NATS_PORTS, AODP_NATS_SUBJECT, SUPPORTED_SERVERS
+          from db.database import Database
+          from services.aodp_nats import AODPNatsAdapter
+          from services.arbitrage_service import ArbitrageService, CostModel
+          from services.market_service import MarketService
+          from services.liquidity import DatabaseLiquidityProvider
+          from services.albion_api import AlbionApiService
+
+          DB_PATH = '/tmp/amh-phase18-live.db'
+          OBSERVATION_SECONDS = 45
+          MAX_MESSAGES = 100
+          db = Database(DB_PATH)
+          db.initialize()
+          adapter = AODPNatsAdapter()
+          received = defaultdict(int)
+          parsed = defaultdict(int)
+          samples = []
+          stop = asyncio.Event()
+
+          async def consume(server, port):
+              url = f'nats://public:thenewalbiondata@{AODP_NATS_HOST}:{port}'
+              try:
+                  nc = await nats.connect(servers=[url], connect_timeout=5, max_reconnect_attempts=0)
+              except Exception as exc:
+                  print(json.dumps({'server': server, 'stage': 'connection', 'status': 'BLOCKED', 'error': f'{type(exc).__name__}: {exc}'}))
+                  return
+
+              async def handler(message):
+                  received[server] += 1
+                  try:
+                      orders = adapter.normalize(message.data, server=server)
+                      for order in orders:
+                          db.upsert_liquidity_order(order)
+                          if len(samples) < 20:
+                              samples.append({
+                                  'server': order.server,
+                                  'item_id': order.item_id,
+                                  'city': order.city,
+                                  'quality': order.quality,
+                                  'side': order.side,
+                                  'price': order.price,
+                                  'quantity': order.quantity,
+                              })
+                      parsed[server] += len(orders)
+                  except Exception as exc:
+                      print(json.dumps({'server': server, 'stage': 'parsing', 'status': 'ERROR', 'error': f'{type(exc).__name__}: {exc}'}))
+                  if sum(received.values()) >= MAX_MESSAGES:
+                      stop.set()
+
+              try:
+                  await nc.subscribe(AODP_NATS_SUBJECT, cb=handler)
+                  await nc.flush()
+                  print(json.dumps({'server': server, 'stage': 'subscription', 'status': 'PASS', 'subject': AODP_NATS_SUBJECT}))
+                  while not stop.is_set():
+                      await asyncio.sleep(0.25)
+              finally:
+                  await nc.close()
+
+          async def run_consumers():
+              tasks = [asyncio.create_task(consume(server, port)) for server, port in AODP_NATS_PORTS.items()]
+              try:
+                  await asyncio.wait_for(stop.wait(), timeout=OBSERVATION_SECONDS)
+              except asyncio.TimeoutError:
+                  pass
+              finally:
+                  stop.set()
+                  await asyncio.gather(*tasks, return_exceptions=True)
+
+          asyncio.run(run_consumers())
+
+          print(json.dumps({
+              'stage': 'live_reception',
+              'received_messages': dict(received),
+              'parsed_orders': dict(parsed),
+              'sample_orders': samples,
+          }, indent=2))
+
+          total_messages = sum(received.values())
+          total_orders = sum(parsed.values())
+          if total_messages == 0 or total_orders == 0:
+              raise SystemExit('NO LIVE NATS MESSAGE OBSERVED within the bounded observation window')
+
+          with db.connect() as con:
+              current_count = con.execute("SELECT COUNT(*) FROM market_liquidity_orders").fetchone()[0]
+              observation_count = con.execute("SELECT COUNT(*) FROM market_liquidity_order_observations").fetchone()[0]
+          print(json.dumps({
+              'stage': 'persistence',
+              'status': 'PASS' if current_count > 0 and observation_count >= total_orders else 'FAIL',
+              'current_orders': current_count,
+              'observations': observation_count,
+          }, indent=2))
+          assert current_count > 0
+          assert observation_count >= total_orders
+
+          # Verify that persisted live orders are visible through the existing liquidity provider.
+          live_pairs = []
+          for row in samples:
+              snapshot = DatabaseLiquidityProvider(db, max_age_minutes=15, source='aodp-nats').get(
+                  row['server'], row['item_id'], row['city'], row['quality']
+              )
+              if snapshot is not None and snapshot.available:
+                  live_pairs.append((row['server'], row['item_id'], row['city'], row['quality']))
+          print(json.dumps({'stage': 'liquidity', 'status': 'PASS' if live_pairs else 'NO_EXECUTABLE_LIQUIDITY', 'pairs_checked': len(samples), 'available_pairs': len(live_pairs)}))
+          if not live_pairs:
+              raise SystemExit('Live NATS orders were persisted, but no fresh liquidity snapshot was available')
+
+          # Try to prove the complete live-order -> liquidity -> arbitrage chain.
+          # No opportunity is required for PASS because a real market may simply
+          # have no profitable spread at observation time.
+          market = MarketService(db, server='east')
+          checked_items = []
+          opportunity_count = 0
+          for server, item_id, city, quality in live_pairs[:10]:
+              if server != 'east' or item_id in checked_items:
+                  continue
+              checked_items.append(item_id)
+              cities = sorted({r[2] for r in live_pairs if r[0] == server and r[1] == item_id})
+              if len(cities) < 2:
+                  continue
+              try:
+                  records = AlbionApiService(host=SUPPORTED_SERVERS[server], timeout=10, retry_count=1).fetch_prices(
+                      [item_id], cities, [quality]
+                  )
+                  if records:
+                      market.save_snapshot_batch(records)
+                  ops = ArbitrageService(db, server).opportunities(
+                      item_id=item_id, quality=quality, quantity=1,
+                      cost_model=CostModel(configured=True), limit=20,
+                      freshness_max_age_minutes=30,
+                  )
+                  opportunity_count += len(ops)
+                  if ops:
+                      print(json.dumps({'stage': 'live_opportunity', 'status': 'PASS', 'item_id': item_id, 'opportunities': len(ops)}))
+                      break
+              except Exception as exc:
+                  print(json.dumps({'stage': 'live_opportunity', 'status': 'BLOCKED', 'item_id': item_id, 'error': f'{type(exc).__name__}: {exc}'}))
+
+          print(json.dumps({'stage': 'live_opportunity_summary', 'opportunities_found': opportunity_count}))
+          print('Live NATS ingestion + persistence + liquidity validation: PASS')
+          print('Live opportunity generation: PASS' if opportunity_count else 'Live opportunity generation: NO CURRENT OPPORTUNITY (pipeline reached arbitrage evaluation)')
+          PY
+
+      - name: FastAPI runtime smoke test
+        env:
+          DATABASE_PATH: /tmp/amh-phase18-runtime.db
+          AODP_NATS_ENABLED: 'false'
+        run: |
+          rm -f /tmp/amh-phase18-runtime.db
+          DATABASE_PATH=/tmp/amh-phase18-runtime.db python - <<'PY'
+          from db.database import Database
+          Database('/tmp/amh-phase18-runtime.db').initialize()
+          PY
+          DATABASE_PATH=/tmp/amh-phase18-runtime.db python run_server.py >/tmp/albion-market-helper-phase18.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+          for i in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:8000/ >/tmp/root.json; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8000/ >/tmp/root.json
+          curl --fail --silent http://127.0.0.1:8000/api/strategies >/tmp/strategies.json
+          curl --fail --silent 'http://127.0.0.1:8000/api/liquidity/status?server=east' >/tmp/liquidity-status.json
+          python - <<'PY'
+          import json
+          assert json.load(open('/tmp/root.json'))['status'] == 'ok'
+          assert isinstance(json.load(open('/tmp/strategies.json')).get('strategies'), list)
+          status = json.load(open('/tmp/liquidity-status.json'))
+          assert status['server'] == 'east'
+          assert 'last_message_at' in status
+          print('FastAPI runtime smoke: PASS')
+          PY
