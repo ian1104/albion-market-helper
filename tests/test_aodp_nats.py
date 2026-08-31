@@ -56,6 +56,34 @@ def test_aodp_nats_adapter_normalizes_observed_single_market_order():
     assert normalized[0].quantity == 4
 
 
+def test_aodp_numeric_location_id_is_normalized_to_market_city():
+    order = {
+        "Id": 43,
+        "ItemTypeId": "T5_SHOES_PLATE_SET1@2",
+        "LocationId": 3004,
+        "QualityLevel": 4,
+        "UnitPriceSilver": 50000,
+        "Amount": 2,
+        "AuctionType": "offer",
+    }
+    normalized = AODPNatsAdapter().normalize(order, server="east", observed_at=OBSERVED)
+    assert normalized[0].city == "Martlock"
+
+
+def test_unknown_numeric_location_id_is_not_guessed():
+    order = {
+        "Id": 44,
+        "ItemTypeId": "T4_BAG",
+        "LocationId": 999999,
+        "QualityLevel": 1,
+        "UnitPriceSilver": 5000,
+        "Amount": 1,
+        "AuctionType": "offer",
+    }
+    normalized = AODPNatsAdapter().normalize(order, server="east", observed_at=OBSERVED)
+    assert normalized[0].city == "999999"
+
+
 def test_adapter_rejects_malformed_payload():
     with pytest.raises(ValueError):
         AODPNatsAdapter().normalize({"not_orders": []}, server="east", observed_at=OBSERVED)
