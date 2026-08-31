@@ -11,11 +11,12 @@ export const api = {
     const data = await request('/api/strategies');
     return data.strategies || [];
   },
-  async opportunities({ server, sort, capital, risk, strategy, limit = 12 }) {
+  async opportunities({ server, sort, capital, risk, strategy, limit = 12, itemId = '' }) {
     const q = new URLSearchParams({ server, sort, limit: String(limit) });
     if (capital !== '') q.set('capital', capital);
     if (risk) q.set('risk', risk);
     if (strategy) q.set('strategy', strategy);
+    if (itemId) q.set('item_id', itemId);
     const data = await request(`/api/opportunities?${q}`);
     return data.opportunities || [];
   },
@@ -29,6 +30,28 @@ export const api = {
       }
     }));
     return Object.fromEntries(entries);
+  },
+  async items({ query = '', tier = '', category = '', enchantment = '', limit = 30 } = {}) {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (query) q.set('query', query);
+    if (tier !== '') q.set('tier', tier);
+    if (category) q.set('category', category);
+    if (enchantment !== '') q.set('enchantment', enchantment);
+    return request(`/api/items?${q}`);
+  },
+  async item(itemId) {
+    return request(`/api/items/${encodeURIComponent(itemId)}`);
+  },
+  async itemMarket({ itemId, server, quality = 1 }) {
+    return request(`/api/items/${encodeURIComponent(itemId)}/market?server=${encodeURIComponent(server)}&quality=${quality}`);
+  },
+  async itemHistory({ itemId, server, quality = 1, city = '' }) {
+    const q = new URLSearchParams({ server, quality: String(quality) });
+    if (city) q.set('city', city);
+    return request(`/api/items/${encodeURIComponent(itemId)}/history?${q}`);
+  },
+  async itemOpportunities({ itemId, server, limit = 20 }) {
+    return request(`/api/items/${encodeURIComponent(itemId)}/opportunities?server=${encodeURIComponent(server)}&limit=${limit}`);
   },
   async market({ itemId, city, quality, server }) {
     const q = new URLSearchParams({ item_id: itemId, city, quality, server });
