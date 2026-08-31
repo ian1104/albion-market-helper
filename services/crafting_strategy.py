@@ -5,7 +5,7 @@ from typing import Any
 
 from config import SUPPORTED_SERVERS
 from db.database import Database
-from services.business_strategy import BusinessOpportunity, BusinessStrategy, RiskLevel, StrategyDefinition
+from services.business_strategy import BusinessOpportunity, RiskLevel, StrategyDefinition
 
 
 @dataclass(frozen=True)
@@ -15,17 +15,12 @@ class CraftingMaterial:
 
 
 class CraftingStrategy:
-    """Generic market-backed crafting calculator.
-
-    Recipe data is supplied by the caller; no item, recipe, city, or price is
-    embedded in the strategy. Missing market inputs produce no fabricated
-    opportunity.
-    """
+    """Generic market-backed crafting calculator using caller-supplied recipes."""
 
     definition = StrategyDefinition(
         strategy_id="crafting",
         name="Crafting",
-        description="Evaluate a caller-supplied crafting recipe against live market prices and configurable return/fee inputs.",
+        description="Evaluate a supplied crafting recipe against market prices and configurable return/fee inputs.",
         required_data=("market_prices", "recipe", "return_rate", "crafting_fee", "time_required"),
         input_parameters=("server", "city", "output_item_id", "materials", "batch_size", "return_rate", "crafting_fee", "selling_fee", "transaction_tax", "time_minutes", "capital"),
         calculator_key="crafting_strategy",
@@ -63,7 +58,7 @@ class CraftingStrategy:
             return []
         if not isinstance(materials_input, (list, tuple)) or not materials_input:
             return []
-        if batch_size <= 0 or return_rate is None or not 0 <= return_rate < 1:
+        if isinstance(batch_size, bool) or batch_size <= 0 or return_rate is None or not 0 <= return_rate < 1:
             return []
         if any(value < 0 for value in (crafting_fee, selling_fee, transaction_tax)):
             return []
@@ -99,8 +94,7 @@ class CraftingStrategy:
             return []
 
         upfront_cost = material_cost + crafting_fee * batch_size
-        returned_material_value = material_cost * return_rate
-        effective_material_cost = material_cost - returned_material_value
+        effective_material_cost = material_cost * (1.0 - return_rate)
         market_fees = (selling_fee + transaction_tax) * output_price * batch_size
         expected_revenue = output_price * batch_size
         expected_cost = effective_material_cost + crafting_fee * batch_size + market_fees
@@ -109,16 +103,11 @@ class CraftingStrategy:
         profit_per_hour = expected_profit / (time_minutes / 60.0) if time_minutes else None
         utilization = None if capital is None or capital <= 0 else upfront_cost / capital * 100.0
 
-        confidence = "HIGH"
-        if time_minutes is None:
-            confidence = "MEDIUM"
-        freshness = "unknown"
         timestamps = [row.get("sell_price_min_date") for row in rows] + [row.get("buy_price_max_date") for row in rows]
-        timestamps = [value for value in timestamps if value]
-        if timestamps:
-            freshness = "recent"
+        freshness = "recent" if any(timestamps) else "unknown"
+        confidence = "HIGH" if time_minutes is not None else "MEDIUM"
 
-        opportunity = BusinessOpportunity(
+        return [BusinessOpportunity(
             strategy_id="crafting",
             title=f"Craft {output_item_id} in {city}",
             server=server,
@@ -132,19 +121,11 @@ class CraftingStrategy:
             expected_cost=expected_cost,
             expected_profit=expected_profit,
             roi_percent=roi,
+            profit_per_hour=profit_per_hour,
             risk=self.definition.risk_level,
-            liquidity="available" if output_price is not None else "unavailable",
+            liquidity="available",
             confidence=confidence,
             freshness=freshness,
             time_required=f"{time_minutes} minutes" if time_minutes else None,
-            explanation=(
-                "Market-backed recipe calculation. Material return rate, station fees, selling costs, "
-                "taxes, and time are caller-supplied; no recipe or price is hardcoded."
-            ),
-        )
-        # Profit/hour is not currently a field in the common contract, so keep it
-        # available to API consumers without changing the strategy-neutral model.
-        result = opportunity.to_dict()
-        result["profit_per_hour"] = profit_per_hour
-        result["data_sufficient"] = True
-        return [result]  # type: ignore[return-value]
+            explanation="Market-backed recipe calculation; recipe, return rate, fees, taxes, and time are caller-supplied.",
+        )]
