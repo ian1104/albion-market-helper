@@ -102,3 +102,40 @@ def slippage_percent(reference_price: float, execution_price: float, side: str) 
     if side == "buy":
         return (execution_price - reference_price) / reference_price * 100.0
     return (reference_price - execution_price) / reference_price * 100.0
+
+
+class DatabaseLiquidityProvider:
+    """Liquidity provider backed by normalized external market-order data.
+
+    ``buy_depth`` represents the sell offers consumed when buying in the
+    requested city; ``sell_depth`` represents buy requests consumed when
+    selling. This preserves the Phase 5 execution API while keeping the
+    underlying order-book side explicit in storage.
+    """
+
+    def __init__(self, database, *, max_age_minutes: float = 15.0, source: str | None = None):
+        if max_age_minutes < 0:
+            raise ValueError("max_age_minutes must be >= 0")
+        self.database = database
+        self.max_age_minutes = max_age_minutes
+        self.source = source
+
+    def get(self, server: str, item_id: str, city: str, quality: int) -> LiquiditySnapshot | None:
+        from datetime import datetime, timedelta, timezone
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=self.max_age_minutes)
+        rows = self.database.liquidity_orders(server=server, item_id=item_id, city=city, quality=quality, observed_after=cutoff.isoformat().replace("+00:00", "Z"))
+        if self.source is not None:
+            rows = [row for row in rows if row["source"] == self.source]
+        if not rows:
+            return None
+        buy_orders = [row for row in rows if row["side"] == "buy"]
+        sell_orders = [row for row in rows if row["side"] == "sell"]
+        buy_depth = tuple(DepthLevel(float(row["price"]), float(row["quantity"])) for row in sorted(sell_orders, key=lambda r: (r["price"], r["id"])))
+        sell_depth = tuple(DepthLevel(float(row["price"]), float(row["quantity"])) for row in sorted(buy_orders, key=lambda r: (-r["price"], r["id"])))
+        return LiquiditySnapshot(
+            available_buy_quantity=sum(level.quantity for level in buy_depth) if buy_depth else None,
+            available_sell_quantity=sum(level.quantity for level in sell_depth) if sell_depth else None,
+            buy_depth=buy_depth,
+            sell_depth=sell_depth,
+            source=self.source or rows[0]["source"],
+        )
