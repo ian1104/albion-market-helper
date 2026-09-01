@@ -59,6 +59,9 @@ jobs:
           curl -fsS "http://127.0.0.1:8000/api/liquidity/status?server=east" > phase23-liquidity-status-east.json
           curl -fsS "http://127.0.0.1:8000/api/opportunities?server=east" > phase23-opportunities-east.json
       - name: Python regression
+        env:
+          AODP_NATS_ENABLED: "false"
+          AODP_NATS_SERVERS: "east"
         run: |
           python -m compileall .
           pytest -q
