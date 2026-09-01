@@ -53,12 +53,15 @@ def test_fastapi_lifespan_starts_and_stops_nats_collectors(monkeypatch):
     assert main.nats_tasks == {}
 
 
-def test_liquidity_status_exposes_live_consumer_state(monkeypatch):
+def test_liquidity_status_exposes_live_consumer_state(monkeypatch, tmp_path):
     import api.main as main
 
+    main.database.path = tmp_path / "status.db"
+    main.database.initialize()
     consumer = SimpleNamespace(
         _client=SimpleNamespace(is_closed=False),
         messages_received=17,
+        orders_parsed=16,
         orders_saved=15,
         invalid_messages=2,
         connection_attempts=2,
@@ -71,11 +74,11 @@ def test_liquidity_status_exposes_live_consumer_state(monkeypatch):
     monkeypatch.setitem(main.nats_consumers, "east", consumer)
     monkeypatch.setattr(main, "AODP_NATS_ENABLED", True)
     monkeypatch.setattr(main, "AODP_NATS_SERVERS", ("east",))
-    monkeypatch.setattr(main.lifecycle_manager, "refresh", lambda *, server: {"ACTIVE": 1})
 
     payload = main.liquidity_status("east")
     assert payload["connected"] is True
     assert payload["messages_received"] == 17
+    assert payload["orders_parsed"] == 16
     assert payload["orders_saved"] == 15
     assert payload["invalid_messages"] == 2
     assert payload["connection_attempts"] == 2
