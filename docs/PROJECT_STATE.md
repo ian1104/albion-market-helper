@@ -2,15 +2,15 @@
 
 ## CURRENT PHASE
 
-**Phase 23-T.1 — SQLite initialization/concurrency regression correction and verification**
+**Phase 23-T.2 — GitHub Actions Automated Verification Pipeline**
 
-Current work is verification/documentation. No application-code change is being made in this documentation step.
+**STATUS: VERIFIED / PASS**
 
 ## CURRENT HEAD SHA
 
-`3e0160a0c8220f98f26a62af92448d7955713ed2`
+Verification target/application commit: `d15f10bd4b91053b79993cd8842f37bd9950b085`.
 
-Verified against GitHub `main` on 2026-09-01.
+The documentation update advances `main`; Run `33519639248` verifies the exact application/CI commit above, not later documentation commits.
 
 ## CURRENT ARCHITECTURE
 
@@ -33,8 +33,6 @@ Major layers:
 
 ## IMPLEMENTED FEATURES
 
-The current repository README and source indicate the following implemented capabilities:
-
 - Current market-price storage and querying.
 - Append-only historical market snapshots.
 - Price statistics, trend, and spread analysis.
@@ -42,130 +40,124 @@ The current repository README and source indicate the following implemented capa
 - Configurable gross/net profit calculations.
 - Data freshness handling.
 - Liquidity-aware executable quantity, weighted execution price, and slippage calculation.
-- Normalized liquidity order persistence with provenance, first/last seen, expiry, and lifecycle state (`ACTIVE`, `EXPIRED`, `STALE`, `UNKNOWN`).
-- Separate historical liquidity-order observations.
+- Normalized liquidity order persistence and historical observations.
 - Persistent AODP NATS consumer behavior including reconnect/backoff, malformed-message isolation, order upsert, observation history, and graceful shutdown.
 - Server-isolated NATS ingestion for canonical `east`, `west`, and `europe`.
-- Strategy abstraction with `StrategyDefinition`, `BusinessStrategy`, `StrategyRegistry`, `ArbitrageStrategy`, `CraftingStrategy`, `BusinessOpportunity`, and `StrategyEngine`.
-- FastAPI strategy/opportunity endpoints including `/api/strategies`, `/api/strategies/{strategy_id}`, and `/api/opportunities`.
-- React Business Dashboard driven by backend strategy/opportunity results.
-- Recipe/production-rule persistence layer; missing recipe or market inputs do not fabricate crafting opportunities.
-- Phase 23 SQLite initialization synchronization and path-aware initialization logic:
-  - shared `threading.RLock()` initialization lock,
-  - `_initialized` state,
-  - `_initialized_path` state,
-  - same-path initialization caching,
-  - reinitialization when the configured database path changes,
-  - migration-aware index rebuilding rather than unconditional rebuild on every initialization.
-- Phase 23-T.1 regression tests covering concurrent initialization, repeated initialization, and concurrent liquidity persistence.
+- Strategy abstraction and business-opportunity aggregation.
+- FastAPI strategy/opportunity endpoints.
+- React/Vite Business Dashboard and existing market-analysis/arbitrage views.
+- Recipe/production-rule persistence and crafting opportunity safeguards.
+- Phase 23-T.1 SQLite initialization synchronization and path-aware initialization logic.
 
 ## VERIFIED FEATURES
 
-Only evidence actually available is listed here. Fixture/test verification and live runtime verification are kept separate.
+Current deterministic GitHub Actions evidence for `d15f10bd4b91053b79993cd8842f37bd9950b085`:
 
-- GitHub `main` currently points to `3e0160a0c8220f98f26a62af92448d7955713ed2`.
-- The Phase 23-T.1 SQLite synchronization implementation and its regression tests are present in the current HEAD.
-- Current Phase 23 workflow separates live collector execution from the Python regression step by disabling NATS for the latter.
-- Historical Termux runtime validation reported successful FastAPI responsiveness, East NATS connectivity/subscription, real AODP NATS message receipt and parsing, SQLite persistence, continued event-loop responsiveness, more than 5,900 received messages/orders persisted, and SQLite `PRAGMA integrity_check = ok`. These are **historical runtime results supplied by the project handoff, not a runtime execution performed in this documentation step**.
+- SQLite initialization/concurrency regression: PASS — 3 passed.
+- Python compileall: PASS.
+- Full Python regression: PASS — 99 passed, 1 warning, 3.35s.
+- Frontend dependency install: PASS.
+- Frontend production build: PASS.
+- Workflow checkout used the exact execution SHA `d15f10bd4b91053b79993cd8842f37bd9950b085`.
+- The deterministic verification workflow completed successfully.
+- The historical CI failures are not present in this current deterministic verification.
 
 ## UNVERIFIED FEATURES
 
-- A fresh local execution of the current HEAD's full pytest suite has not been performed in the current execution environment.
-- A fresh execution of `tests/test_database_initialization_concurrency.py` against current HEAD has not been performed here.
-- A fresh execution of `tests/test_liquidity.py` and `tests/test_phase21_application_lifecycle.py` against current HEAD has not been performed here.
-- `python -m compileall .` has not been performed against current HEAD in the current execution environment.
-- A fresh frontend `npm install` / `npm run build` has not been performed against current HEAD in the current execution environment.
-- No current HEAD GitHub Actions run is presently available to establish a PASS/FAIL result for `3e0160a`.
-- The exact runtime thread interleaving that produced the historical `idx_market_price_history_lookup already exists` exception was not captured with thread stacks.
+- No fresh local execution outside GitHub Actions is recorded for this verification.
+- Current live Termux runtime behavior was not re-executed during Phase 23-T.2.
+- Exact runtime thread interleaving for the historical SQLite index exception remains unproven.
+- Later documentation-only commits are not covered by Run `33519639248`.
 
 ## KNOWN ISSUES
 
-### Historical CI failure — not current HEAD
+### Historical CI failure — not current verification
 
-GitHub Actions Run `33500437389` executed at commit `5bbc7e69af39dd940fcc6360b9dda51ef95dfee5`, not the current HEAD. It reported `97 passed / 2 failed`:
+Run `33500437389` executed at `5bbc7e69af39dd940fcc6360b9dda51ef95dfee5`, not the deterministic verification target. It reported `97 passed / 2 failed`:
 
-1. `test_liquidity_status_and_summary_endpoints`: `enabled=True` while the test expected `False`.
+1. `test_liquidity_status_and_summary_endpoints`: expected `enabled=False`, received `True`.
 2. `test_liquidity_status_exposes_live_consumer_state`: `sqlite3.OperationalError: no such table: market_liquidity_orders`.
 
-This run is historical information only and is **not** the current CI result for `3e0160a`.
+This remains historical information only.
 
 ### Historical Termux runtime error
 
-During prior live validation, the following was observed:
+During prior live validation:
 
 ```text
 OperationalError:
 index idx_market_price_history_lookup already exists
 ```
 
-The server and NATS consumer reportedly continued operating afterward. The code-level race was subsequently addressed through synchronized initialization and migration/index lifecycle changes. However, the exact runtime interleaving was not captured, so the runtime causal chain is not considered conclusively proven at thread-stack level.
+The server and NATS consumer reportedly continued operating afterward. Subsequent source changes addressed initialization/migration synchronization. The exact runtime interleaving was not captured with thread stacks.
+
+### Current warnings
+
+- GitHub Actions emits Node.js 20 deprecation warnings for `actions/checkout@v4`, `actions/setup-python@v5`, and `actions/setup-node@v4` on the current runner.
+- Frontend Vite build emitted a CSS minification warning: `Expected ":" [css-syntax-error]` while still completing successfully.
+- Python pytest emitted one `StarletteDeprecationWarning` concerning use of `httpx` with `starlette.testclient`.
+
+These warnings did not fail the deterministic CI run.
 
 ## CURRENT RISKS
 
-- The current SQLite initialization implementation is code-reviewed against the repository, but its regression status on the current HEAD remains unverified until tests are actually executed.
-- The current HEAD has no verified CI run available in the present inspection.
-- The historical runtime index error demonstrates why initialization/migration concurrency must remain covered by regression tests.
-- Live NATS behavior and fixture-based Python tests must continue to be treated as separate evidence classes.
-- Local working-tree cleanliness cannot be established through the GitHub repository API alone; no claim of a clean local working tree is made here.
+- The verified CI SHA is `d15f10bd...`; documentation commits now advance `main`, so future development must re-check the actual current HEAD.
+- Live runtime behavior remains evidence-specific and is not replaced by deterministic CI.
+- Action/runtime deprecation warnings should eventually be addressed, but they are not Phase 23-T.2 failures.
 
 ## LAST TEST RESULTS
 
-**Current HEAD:** no fresh local test execution available in this environment.
-
-Historical results must not be substituted for a current result.
-
-The required next verification sequence is:
+Deterministic CI Run `33519639248` at SHA `d15f10bd4b91053b79993cd8842f37bd9950b085`:
 
 ```text
-pytest -q tests/test_database_initialization_concurrency.py
-pytest -q tests/test_liquidity.py tests/test_phase21_application_lifecycle.py
-pytest -q
-python -m compileall .
-frontend: npm install && npm run build
+SQLite concurrency regression: 3 passed
+Python compileall: PASS
+Full pytest: 99 passed, 1 warning, 3.35s
+Frontend dependency install: PASS
+Frontend production build: PASS
 ```
 
 ## LAST CI RESULT
 
-**No verified CI run currently available for HEAD `3e0160a0c8220f98f26a62af92448d7955713ed2`.**
+```text
+Workflow: Phase 23-T.1 Automated Verification
+Run ID: 33519639248
+Execution SHA: d15f10bd4b91053b79993cd8842f37bd9950b085
+Verification target SHA: d15f10bd4b91053b79993cd8842f37bd9950b085
+SHA MATCH: YES
+Overall: PASS
+```
 
-Historical Run `33500437389` / SHA `5bbc7e69af39dd940fcc6360b9dda51ef95dfee5` is recorded above only as historical context.
+All three jobs completed successfully.
 
 ## LAST RUNTIME RESULT
 
-Historical Phase 23-T Termux validation, as recorded by the project handoff:
+Historical Phase 23-T Termux validation:
 
 - FastAPI HTTP responsiveness maintained for approximately 56 minutes.
-- East NATS connection maintained.
-- NATS subscription remained active.
-- Real AODP NATS messages were received.
-- Messages were parsed and persisted to SQLite.
+- East NATS connection maintained and subscription remained active.
+- Real AODP NATS messages were received, parsed, and persisted to SQLite.
 - Event-loop hang was not reproduced.
 - More than 5,900 messages were received and more than 5,900 orders were persisted.
 - SQLite `PRAGMA integrity_check` returned `ok`.
-- `idx_market_price_history_lookup already exists` occurred during live measurement; server/consumer continued running afterward.
+- Historical `idx_market_price_history_lookup already exists` occurred; server/consumer continued operating afterward.
 
-These results are preserved as historical runtime evidence and are not claimed as a fresh run of the current HEAD.
+No Termux server or runtime database was modified during Phase 23-T.2 CI verification.
 
 ## NEXT EXACT STEPS
 
-1. Obtain an execution environment containing a checkout of current GitHub `main` at the latest HEAD.
-2. Run the SQLite concurrency regression test.
-3. Run the two related liquidity/lifecycle regression files.
-4. Run the full `pytest -q` suite.
-5. Run `python -m compileall .`.
-6. Inspect frontend package configuration, then run `npm install` and `npm run build` if network/dependencies permit.
-7. If a test fails, record the exact traceback and compare it with current code before making any change.
-8. Only if a current-HEAD failure is reproduced, apply the smallest in-scope correction and rerun regression.
-9. Confirm the resulting commit SHA and obtain a GitHub Actions run for that exact SHA.
+1. Reconfirm the actual GitHub `main` HEAD after the documentation commit.
+2. Treat Run `33519639248` / SHA `d15f10bd4b91053b79993cd8842f37bd9950b085` as the completed deterministic verification evidence.
+3. Continue with the next roadmap phase from the actual current `main` HEAD, or perform a separately authorized bounded Termux runtime validation if live evidence is required.
 
 ## DO NOT DO
 
-- Do not treat Run `33500437389` as a current HEAD failure.
-- Do not report PASS or FAIL for tests that were not executed.
-- Do not weaken or delete assertions to obtain green tests.
+- Do not treat historical Run `33500437389` as current.
+- Do not treat Run `33519639248` as coverage of later documentation-only commits.
+- Do not weaken or delete regression assertions.
 - Do not remove the Phase 23-T.1 concurrency regression tests.
 - Do not perform unrelated refactors.
-- Do not change NATS architecture as part of SQLite regression work.
+- Do not change NATS architecture during SQLite regression work.
 - Do not stop/restart a live Termux server without explicit approval.
-- Do not delete or reset the existing runtime database without explicit approval.
-- Do not infer runtime thread interleaving that was not captured.
+- Do not delete/reset the runtime database without explicit approval.
+- Do not infer a specific runtime thread interleaving without captured evidence.
