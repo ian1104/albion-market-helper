@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.phase22_analysis import _age_minutes, analyze, observation_stats
@@ -27,18 +28,19 @@ def _db(path: Path) -> None:
     );
     CREATE INDEX idx_liquidity_observations_lookup ON market_liquidity_orders(server, item_id, city, quality, side, status, last_seen, expires_at, price);
     """)
+    recorded_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     history = [
-        (1,"east","T4_TEST","Bridgewatch",1,100,"2026-09-01T00:00:00Z",90,"2026-09-01T00:00:00Z","2026-09-01T00:00:01Z"),
-        (2,"east","T4_TEST","Caerleon",1,150,"2026-09-01T00:00:00Z",140,"2026-09-01T00:00:00Z","2026-09-01T00:00:01Z"),
+        (1,"east","T4_TEST","Bridgewatch",1,100,recorded_at,90,recorded_at,recorded_at),
+        (2,"east","T4_TEST","Caerleon",1,150,recorded_at,140,recorded_at,recorded_at),
     ]
     connection.executemany("INSERT INTO market_price_history VALUES(?,?,?,?,?,?,?,?,?,?)", history)
     connection.executemany("INSERT INTO market_prices VALUES(?,?,?,?,?,?,?,?,?,?)", [
-        (1,"east","T4_TEST","Bridgewatch",1,100,"2026-09-01T00:00:00Z",90,"2026-09-01T00:00:00Z","2026-09-01T00:00:01Z"),
-        (2,"east","T4_TEST","Caerleon",1,150,"2026-09-01T00:00:00Z",140,"2026-09-01T00:00:00Z","2026-09-01T00:00:01Z"),
+        (1,"east","T4_TEST","Bridgewatch",1,100,recorded_at,90,recorded_at,recorded_at),
+        (2,"east","T4_TEST","Caerleon",1,150,recorded_at,140,recorded_at,recorded_at),
     ])
     connection.executemany("INSERT INTO market_liquidity_orders VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
-        (1,"aodp-nats","east","s1","T4_TEST","Bridgewatch",1,"sell",100,10,None,"2026-09-01T00:00:01Z",None,"2026-09-01T00:00:01Z","2026-09-01T00:00:01Z","ACTIVE"),
-        (2,"aodp-nats","east","b1","T4_TEST","Caerleon",1,"buy",140,5,None,"2026-09-01T00:00:01Z",None,"2026-09-01T00:00:01Z","2026-09-01T00:00:01Z","ACTIVE"),
+        (1,"aodp-nats","east","s1","T4_TEST","Bridgewatch",1,"sell",100,10,None,recorded_at,None,recorded_at,recorded_at,"ACTIVE"),
+        (2,"aodp-nats","east","b1","T4_TEST","Caerleon",1,"buy",140,5,None,recorded_at,None,recorded_at,recorded_at,"ACTIVE"),
     ])
     connection.commit(); connection.close()
 
