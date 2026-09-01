@@ -1,30 +1,35 @@
 # Albion Market Helper — Roadmap
 
-This document describes planned or ongoing work. It is **not** a statement that every listed phase is currently implemented or verified.
+This document describes planned or ongoing work. It is not a statement that every listed phase is currently implemented or verified.
 
 ## Status vocabulary
 
 - **PLANNED** — intended future work; implementation not established by the current repository state.
 - **IN PROGRESS** — active work in the current development cycle.
-- **IMPLEMENTED** — implementation exists in the repository; fresh verification may still be pending.
+- **IMPLEMENTED** — implementation exists; fresh verification may still be pending.
 - **VERIFIED** — implementation has current, relevant execution evidence.
 - **BLOCKED** — work cannot currently be completed because a required environment, dependency, or external condition is unavailable.
 
 ## Current phase
 
+### Phase 23-T.2 — GitHub Actions Automated Verification
+**Status: COMPLETED / VERIFIED**
+
+The deterministic verification workflow was executed successfully against exact commit SHA `d15f10bd4b91053b79993cd8842f37bd9950b085`.
+
+Run `33519639248` verified:
+
+- SQLite concurrency regression: PASS (3 passed).
+- Python compileall: PASS.
+- Full Python regression: PASS (99 passed, 1 warning, 3.35s).
+- Frontend dependency install: PASS.
+- Frontend production build: PASS.
+- Execution SHA matched the verification target SHA.
+
 ### Phase 23-T.1 — SQLite initialization/concurrency regression
-**Status: IN PROGRESS**
+**Status: VERIFIED through Phase 23-T.2 deterministic CI**
 
-Goals:
-
-- Prevent concurrent SQLite initialization/migration races.
-- Make initialization synchronization explicit and shared across `Database` instances in the same process.
-- Make initialization caching aware of the database path.
-- Avoid unnecessary migration/index rebuild work during normal repeated persistence.
-- Preserve meaningful concurrency regression coverage.
-- Verify the current HEAD with real pytest/compile/frontend execution and GitHub Actions.
-
-Current repository evidence shows the synchronization and path-aware initialization implementation plus regression tests are already committed. Fresh execution of the current HEAD remains outstanding.
+The repository contains synchronized, path-aware initialization and migration/index lifecycle handling, with regression coverage for concurrent initialization, repeated initialization, and concurrent liquidity persistence. The current implementation was exercised by the dedicated SQLite concurrency regression in Run `33519639248`.
 
 ## Completed implementation areas
 
@@ -79,55 +84,36 @@ Current repository evidence shows the synchronization and path-aware initializat
 - Regression coverage for restart recovery/server isolation.
 - Bounded live observation workflow.
 
-The repository's README describes these capabilities; fresh execution evidence must still be distinguished from historical runtime evidence.
+## Phase 23-T workstream
 
-## Phase 23-T.1 workstream
+### Deterministic CI verification
+**Status: VERIFIED**
 
-### Initialization synchronization
-**Status: IMPLEMENTED; VERIFICATION PENDING**
+Workflow: `Phase 23-T.1 Automated Verification`
 
-- Shared `threading.RLock()`.
-- `_initialized` state.
-- `_initialized_path` state.
-- Same-path initialization cache.
-- Reinitialization after database path changes.
+Run: `33519639248`
 
-### Migration/index lifecycle
-**Status: IMPLEMENTED; VERIFICATION PENDING**
+Execution SHA: `d15f10bd4b91053b79993cd8842f37bd9950b085`
 
-- Migration detects schema/index-affecting changes.
-- Historical price index rebuild is conditional on the relevant migration.
-- Liquidity index rebuild is conditional on liquidity schema changes.
-- Normal initialization still applies the declared schema safely.
+The workflow uses exact-SHA checkout and separates deterministic regression from live NATS observation by setting `AODP_NATS_ENABLED=false` for Python jobs.
 
-### Regression coverage
-**Status: IMPLEMENTED; VERIFICATION PENDING**
+## Warnings retained
 
-Current test coverage includes:
+The successful run emitted non-fatal warnings:
 
-- concurrent initialization across multiple `Database` instances,
-- repeated initialization idempotence,
-- concurrent liquidity persistence without schema races,
-- integrity/index checks after those operations.
+- GitHub Actions Node.js 20 deprecation warnings for `actions/checkout@v4`, `actions/setup-python@v5`, and `actions/setup-node@v4`.
+- One pytest `StarletteDeprecationWarning` concerning `httpx` with `starlette.testclient`.
+- One Vite CSS minification warning: `Expected ":" [css-syntax-error]`.
 
-## Planned verification sequence
+These did not change the successful conclusion of Run `33519639248`.
 
-### Current HEAD execution
-**Status: BLOCKED until a usable repository execution environment is available**
+## Historical evidence
 
-1. `pytest -q tests/test_database_initialization_concurrency.py`
-2. `pytest -q tests/test_liquidity.py tests/test_phase21_application_lifecycle.py`
-3. `pytest -q`
-4. `python -m compileall .`
-5. Inspect frontend package configuration.
-6. Run `npm install` and `npm run build` when dependencies/network are available.
-7. If failures occur, diagnose from the exact traceback before changing code.
-8. If code changes are necessary, rerun the complete regression sequence.
-9. Confirm GitHub Actions results against the exact resulting commit SHA.
+Historical CI Run `33500437389` at SHA `5bbc7e69af39dd940fcc6360b9dda51ef95dfee5` reported `97 passed / 2 failed`. It is retained as historical evidence and is not the current deterministic verification result.
+
+Historical Termux runtime validation reported sustained FastAPI responsiveness, East NATS connectivity/subscription, real message receipt/parsing/persistence, more than 5,900 messages/orders, and SQLite integrity check `ok`. It also observed `idx_market_price_history_lookup already exists`; the exact thread interleaving was not captured.
 
 ## Future work
-
-The following are roadmap-level directions and should not be interpreted as current implementation status unless separately confirmed in the repository:
 
 ### Improved live market-data validation
 **Status: PLANNED**
@@ -152,8 +138,8 @@ The following are roadmap-level directions and should not be interpreted as curr
 
 ## Scope rules
 
-- Roadmap entries do not imply implementation.
-- A feature is not `VERIFIED` merely because source code exists.
+- Roadmap entries do not imply implementation unless marked accordingly.
+- A feature is not VERIFIED merely because source code exists.
 - Fixture PASS is not LIVE PASS.
 - Historical runtime evidence is not current runtime evidence.
 - Historical CI is not current CI.
