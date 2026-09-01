@@ -187,7 +187,7 @@ class AODPNatsConsumer:
 
     async def _on_error(self, error) -> None:
         self.last_error = f"{type(error).__name__}: {error}"
-        logger.warning("AODP NATS error for %s: {error}", self.server)
+        logger.warning("AODP NATS error for %s: %s", self.server, error)
 
     async def _connect_once(self) -> None:
         try:
