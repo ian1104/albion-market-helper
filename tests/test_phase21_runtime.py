@@ -18,7 +18,13 @@ def _payload(order_id=7001, location=3010):
     }).encode()
 
 
-def test_phase21_consumer_stop_interrupts_backoff(tmp_path):
+def test_phase21_consumer_stop_interrupts_backoff(monkeypatch, tmp_path):
+    import nats
+
+    async def fail_connect(*args, **kwargs):
+        raise RuntimeError("simulated connection failure")
+
+    monkeypatch.setattr(nats, "connect", fail_connect)
     db = Database(tmp_path / "stop.db")
     consumer = AODPNatsConsumer(
         AODPNatsAdapter(), db, server="east", nats_url="nats://invalid",
