@@ -17,65 +17,54 @@ jobs:
     steps:
       - name: Checkout clean main
         uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Initialize database
         run: python -c "from db.database import Database; Database().initialize()"
-
       - name: Start application with persistent NATS collector
         run: |
           nohup uvicorn api.main:app --host 127.0.0.1 --port 8000 > /tmp/phase22-api.log 2>&1 &
           echo $! > /tmp/phase22-api.pid
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/ && break; sleep 1; done
-
       - name: Collect real REST price snapshots
         run: |
           python - <<'PY'
-          import os
           import time
           from config import CITIES, QUALITIES, WATCHLIST
           from services.albion_api import AlbionApiService
           from services.market_service import MarketService
           from db.database import Database
-
-          api = AlbionApiService()
-          market = MarketService(Database(), "east")
+          api = AlbionApiService(); market = MarketService(Database(), "east")
           for _ in range(3):
               records = api.fetch_prices(WATCHLIST, CITIES, QUALITIES)
               market.save_snapshot_batch(records)
               print(f"real REST records saved: {len(records)}")
               time.sleep(30)
           PY
-
       - name: Observe live NATS for bounded window
         run: sleep 150
-
       - name: Analyze actual database
         run: python scripts/phase22_analysis.py --db data/phase22.db --server east | tee phase22-analysis.json
-
       - name: API opportunity smoke test
         run: |
           curl -fsS "http://127.0.0.1:8000/api/liquidity/status" | tee phase22-liquidity-status.json
           curl -fsS "http://127.0.0.1:8000/api/opportunities?server=east" | tee phase22-opportunities.json
-
       - name: Python regression
+        env:
+          AODP_NATS_ENABLED: "false"
+          AODP_NATS_SERVERS: "east"
         run: |
           python -m compileall .
           pytest -q
-
       - name: Stop application
         if: always()
         run: |
           if [ -f /tmp/phase22-api.pid ]; then kill "$(cat /tmp/phase22-api.pid)" || true; fi
           sleep 2
-
       - name: Upload Phase 22 analysis
         if: always()
         uses: actions/upload-artifact@v4
