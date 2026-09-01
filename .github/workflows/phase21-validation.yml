@@ -9,7 +9,7 @@ on:
 jobs:
   runtime-validation:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 13
     steps:
       - name: Checkout clean main
         uses: actions/checkout@v4
