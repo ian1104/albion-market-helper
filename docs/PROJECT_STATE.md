@@ -2,15 +2,17 @@
 
 ## CURRENT PHASE
 
-**Phase 23-T.2 — GitHub Actions Automated Verification Pipeline**
+**Phase 23-T.3 — Backend ↔ Frontend Integration Verification**
 
-**STATUS: VERIFIED / PASS**
+**STATUS: IN PROGRESS / NOT FULLY VERIFIED**
 
 ## CURRENT HEAD SHA
 
-Verification target/application commit: `d15f10bd4b91053b79993cd8842f37bd9950b085`.
+Current GitHub `main` HEAD at the start of Phase 23-T.3 verification:
 
-The documentation update advances `main`; Run `33519639248` verifies the exact application/CI commit above, not later documentation commits.
+`2b5004a1f49768871e610ad8865a8c7d6318b30e`
+
+This is a documentation-only continuation after application commit `d15f10bd4b91053b79993cd8842f37bd9950b085`.
 
 ## CURRENT ARCHITECTURE
 
@@ -27,83 +29,125 @@ Major layers:
 - AODP REST price collection.
 - Optional persistent AODP NATS consumers for observational order-book/liquidity data.
 - Market analysis and arbitrage services.
-- Liquidity provider/adapter boundary using persisted normalized orders.
-- StrategyRegistry / StrategyEngine / BusinessOpportunity abstraction for business-strategy aggregation.
-- React/Vite frontend Business Dashboard plus existing market-analysis and arbitrage views.
+- StrategyRegistry / StrategyEngine / BusinessOpportunity aggregation.
+- React/Vite frontend Business Dashboard plus market-analysis and arbitrage views.
 
-## IMPLEMENTED FEATURES
+## PHASE 23-T.3 SOURCE INSPECTION
 
-- Current market-price storage and querying.
-- Append-only historical market snapshots.
-- Price statistics, trend, and spread analysis.
-- Arbitrage opportunity calculation.
-- Configurable gross/net profit calculations.
-- Data freshness handling.
-- Liquidity-aware executable quantity, weighted execution price, and slippage calculation.
-- Normalized liquidity order persistence and historical observations.
-- Persistent AODP NATS consumer behavior including reconnect/backoff, malformed-message isolation, order upsert, observation history, and graceful shutdown.
-- Server-isolated NATS ingestion for canonical `east`, `west`, and `europe`.
-- Strategy abstraction and business-opportunity aggregation.
-- FastAPI strategy/opportunity endpoints.
-- React/Vite Business Dashboard and existing market-analysis/arbitrage views.
-- Recipe/production-rule persistence and crafting opportunity safeguards.
-- Phase 23-T.1 SQLite initialization synchronization and path-aware initialization logic.
+The current `main` source was inspected before any modification.
+
+Confirmed frontend market path:
+
+`Market.jsx → api.market() → /api/market/prices + /api/market/analysis + /api/market/history + /api/market/spread`
+
+The frontend also uses:
+
+`/api/items/{item_id}`
+`/api/items/{item_id}/market`
+`/api/items/{item_id}/history`
+`/api/items/{item_id}/opportunities`
+
+Confirmed backend routes exist for all of the above paths.
+
+Confirmed response-shape compatibility at source level:
+
+- `/api/market/prices` returns an array; frontend uses the first row as `current`.
+- `/api/market/analysis` returns an analysis object.
+- `/api/market/history` returns an array; frontend consumes it as history.
+- `/api/market/spread` is optional in the frontend and does not cause market loading failure when unavailable.
+- `/api/items/{item_id}/market` returns `cities`; frontend consumes `marketResponse.cities`.
+- `/api/items/{item_id}/history` returns `history`; frontend consumes `historyResponse.history`.
+- `/api/items/{item_id}/opportunities` returns `opportunities`.
+
+Confirmed CORS source configuration:
+
+```text
+allow_origins=["*"]
+allow_credentials=False
+allow_methods=["*"]
+allow_headers=["*"]
+```
+
+### Important integration finding
+
+`frontend/src/services/api.js` uses:
+
+```text
+import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+```
+
+No Vite proxy configuration was found in the current repository source inspection.
+
+Therefore, source-level evidence strongly suggests a Codespaces/browser deployment risk: when the browser is not running on the same host as FastAPI, `127.0.0.1:8000` refers to the browser client's localhost rather than the Codespace backend. This is a **strongly suspected cause** of the historical `시장의 데이터를 불러오지 못했습니다.` symptom, not a runtime-confirmed root cause.
 
 ## VERIFIED FEATURES
 
-Current deterministic GitHub Actions evidence for `d15f10bd4b91053b79993cd8842f37bd9950b085`:
+Existing deterministic CI evidence for application commit `d15f10bd4b91053b79993cd8842f37bd9950b085` remains valid:
 
-- SQLite initialization/concurrency regression: PASS — 3 passed.
+- SQLite concurrency regression: PASS — 3 passed.
 - Python compileall: PASS.
-- Full Python regression: PASS — 99 passed, 1 warning, 3.35s.
-- Frontend dependency install: PASS.
+- Full pytest: PASS — 99 passed, 1 warning, 3.35s.
+- Frontend dependency installation: PASS.
 - Frontend production build: PASS.
-- Workflow checkout used the exact execution SHA `d15f10bd4b91053b79993cd8842f37bd9950b085`.
-- The deterministic verification workflow completed successfully.
-- The historical CI failures are not present in this current deterministic verification.
+- Exact execution SHA match: PASS.
+
+These results verify build/regression behavior, not browser-level Backend ↔ Frontend integration.
+
+## PHASE 23-T.3 VERIFICATION MATRIX
+
+| Component | Current result |
+|---|---|
+| Frontend API URL | SOURCE VERIFIED; Codespaces risk identified |
+| Frontend endpoint | SOURCE VERIFIED |
+| FastAPI endpoint | SOURCE VERIFIED |
+| FastAPI → service | SOURCE VERIFIED for market analysis path |
+| Service → SQLite | SOURCE VERIFIED; runtime not re-executed in this phase |
+| CORS / proxy | CORS SOURCE PASS; proxy NOT FOUND / NOT VERIFIED |
+| Backend HTTP response | NOT TESTED in this phase |
+| Frontend receives JSON | NOT TESTED |
+| Frontend renders market data | NOT TESTED |
+| Test-data E2E | NOT TESTED |
+| Real AODP → UI path | NOT TESTED |
 
 ## UNVERIFIED FEATURES
 
-- No fresh local execution outside GitHub Actions is recorded for this verification.
-- Current live Termux runtime behavior was not re-executed during Phase 23-T.2.
-- Exact runtime thread interleaving for the historical SQLite index exception remains unproven.
-- Later documentation-only commits are not covered by Run `33519639248`.
+- No fresh browser/network capture was available during this verification.
+- No fresh local FastAPI runtime was executed during this phase.
+- No fresh React/Vite dev-server execution was executed during this phase.
+- No actual browser rendering of market data was observed.
+- No test-data SQLite → FastAPI → React E2E run was observed.
+- The historical Codespaces failure has not been reproduced with request URL, HTTP status, backend log, and browser rendering evidence.
 
 ## KNOWN ISSUES
 
 ### Historical CI failure — not current verification
 
-Run `33500437389` executed at `5bbc7e69af39dd940fcc6360b9dda51ef95dfee5`, not the deterministic verification target. It reported `97 passed / 2 failed`:
-
-1. `test_liquidity_status_and_summary_endpoints`: expected `enabled=False`, received `True`.
-2. `test_liquidity_status_exposes_live_consumer_state`: `sqlite3.OperationalError: no such table: market_liquidity_orders`.
-
-This remains historical information only.
+Run `33500437389` executed at `5bbc7e69af39dd940fcc6360b9dda51ef95dfee5`, not the deterministic verification target. It reported `97 passed / 2 failed`.
 
 ### Historical Termux runtime error
-
-During prior live validation:
 
 ```text
 OperationalError:
 index idx_market_price_history_lookup already exists
 ```
 
-The server and NATS consumer reportedly continued operating afterward. Subsequent source changes addressed initialization/migration synchronization. The exact runtime interleaving was not captured with thread stacks.
+This remains historical evidence. The current deterministic SQLite concurrency regression passed.
+
+### Current integration risk
+
+The frontend API fallback is hard-coded to `http://127.0.0.1:8000`, while no Vite proxy configuration was found. This is compatible with a same-machine local browser/backend setup but is a significant Codespaces/browser-hosting risk.
 
 ### Current warnings
 
-- GitHub Actions emits Node.js 20 deprecation warnings for `actions/checkout@v4`, `actions/setup-python@v5`, and `actions/setup-node@v4` on the current runner.
-- Frontend Vite build emitted a CSS minification warning: `Expected ":" [css-syntax-error]` while still completing successfully.
-- Python pytest emitted one `StarletteDeprecationWarning` concerning use of `httpx` with `starlette.testclient`.
-
-These warnings did not fail the deterministic CI run.
+- GitHub Actions Node.js 20 deprecation warnings for checkout/setup actions.
+- One Starlette/httpx TestClient deprecation warning in pytest.
+- One Vite CSS minification warning during production build.
 
 ## CURRENT RISKS
 
-- The verified CI SHA is `d15f10bd...`; documentation commits now advance `main`, so future development must re-check the actual current HEAD.
-- Live runtime behavior remains evidence-specific and is not replaced by deterministic CI.
-- Action/runtime deprecation warnings should eventually be addressed, but they are not Phase 23-T.2 failures.
+- Backend ↔ Frontend runtime integration is not yet execution-verified.
+- The Codespaces localhost API-base issue is strongly suspected but not proven as the historical failure's root cause.
+- CI build success must not be treated as browser integration success.
 
 ## LAST TEST RESULTS
 
@@ -128,36 +172,34 @@ SHA MATCH: YES
 Overall: PASS
 ```
 
-All three jobs completed successfully.
-
 ## LAST RUNTIME RESULT
 
-Historical Phase 23-T Termux validation:
+Historical Phase 23-T Termux validation remains the latest recorded live runtime evidence:
 
-- FastAPI HTTP responsiveness maintained for approximately 56 minutes.
-- East NATS connection maintained and subscription remained active.
-- Real AODP NATS messages were received, parsed, and persisted to SQLite.
-- Event-loop hang was not reproduced.
-- More than 5,900 messages were received and more than 5,900 orders were persisted.
+- FastAPI responsiveness maintained for approximately 56 minutes.
+- East NATS connection/subscription maintained.
+- Real AODP NATS messages received, parsed, and persisted to SQLite.
+- More than 5,900 messages/orders observed.
 - SQLite `PRAGMA integrity_check` returned `ok`.
-- Historical `idx_market_price_history_lookup already exists` occurred; server/consumer continued operating afterward.
 
-No Termux server or runtime database was modified during Phase 23-T.2 CI verification.
+No live runtime was modified during this Phase 23-T.3 source inspection.
 
 ## NEXT EXACT STEPS
 
-1. Reconfirm the actual GitHub `main` HEAD after the documentation commit.
-2. Treat Run `33519639248` / SHA `d15f10bd4b91053b79993cd8842f37bd9950b085` as the completed deterministic verification evidence.
-3. Continue with the next roadmap phase from the actual current `main` HEAD, or perform a separately authorized bounded Termux runtime validation if live evidence is required.
+1. Obtain an actual executable environment containing the current `main` source and run the backend plus frontend.
+2. Capture the browser Network request made by `api.market()` and its HTTP status/response.
+3. Verify the browser can reach the FastAPI host rather than its own `127.0.0.1:8000`.
+4. Seed or use representative market data and verify SQLite → FastAPI → React rendering.
+5. If failure occurs, capture request URL, status, backend log, JSON response, and frontend parsing error before changing code.
+6. Only after runtime evidence identifies a real defect should a minimal application change be considered.
 
 ## DO NOT DO
 
-- Do not treat historical Run `33500437389` as current.
-- Do not treat Run `33519639248` as coverage of later documentation-only commits.
-- Do not weaken or delete regression assertions.
-- Do not remove the Phase 23-T.1 concurrency regression tests.
-- Do not perform unrelated refactors.
-- Do not change NATS architecture during SQLite regression work.
+- Do not mark Backend ↔ Frontend integration PASS from source inspection alone.
+- Do not mark frontend PASS merely because `npm run build` succeeds.
+- Do not mark E2E PASS merely because pytest succeeds.
+- Do not change `api.js`, Vite configuration, or backend routes solely from the Codespaces hypothesis without runtime confirmation.
 - Do not stop/restart a live Termux server without explicit approval.
 - Do not delete/reset the runtime database without explicit approval.
-- Do not infer a specific runtime thread interleaving without captured evidence.
+- Do not weaken regression assertions.
+- Do not perform unrelated refactors.
