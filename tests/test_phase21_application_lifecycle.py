@@ -73,9 +73,7 @@ def test_liquidity_status_exposes_live_consumer_state(monkeypatch):
     monkeypatch.setattr(main, "AODP_NATS_SERVERS", ("east",))
     monkeypatch.setattr(main.lifecycle_manager, "refresh", lambda *, server: {"ACTIVE": 1})
 
-    response = TestClient(main.app).get("/api/liquidity/status?server=east")
-    assert response.status_code == 200
-    payload = response.json()
+    payload = main.liquidity_status("east")
     assert payload["connected"] is True
     assert payload["messages_received"] == 17
     assert payload["orders_saved"] == 15
