@@ -1,0 +1,75 @@
+name: Phase 23 Arbitrage Data Source Analysis
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  phase23-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      AODP_NATS_ENABLED: "true"
+      AODP_NATS_SERVERS: "east,west,europe"
+      DATABASE_PATH: "data/phase23.db"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Checkout clean main
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Initialize database
+        run: python -c "from db.database import Database; Database().initialize()"
+      - name: Start application
+        run: |
+          nohup uvicorn api.main:app --host 127.0.0.1 --port 8000 > /tmp/phase23-api.log 2>&1 &
+          echo $! > /tmp/phase23-api.pid
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/ && break; sleep 1; done
+      - name: Collect real REST price snapshots
+        run: |
+          python - <<'PY'
+          import time
+          from config import CITIES, QUALITIES, WATCHLIST
+          from services.albion_api import AlbionApiService
+          from services.market_service import MarketService
+          from db.database import Database
+          api = AlbionApiService(); market = MarketService(Database(), "east")
+          for i in range(3):
+              records = api.fetch_prices(WATCHLIST, CITIES, QUALITIES)
+              market.save_snapshot_batch(records)
+              print(f"snapshot {i + 1}: real REST records saved={len(records)}")
+              if i < 2: time.sleep(20)
+          PY
+      - name: Observe real NATS order book
+        run: sleep 120
+      - name: Analyze real database
+        run: python scripts/phase23_analysis.py --db data/phase23.db --server east --output phase23-analysis.json
+      - name: API smoke test
+        run: |
+          curl -fsS "http://127.0.0.1:8000/api/liquidity/status" > phase23-liquidity-status.json
+          curl -fsS "http://127.0.0.1:8000/api/opportunities?server=east" > phase23-opportunities.json
+      - name: Regression tests
+        run: |
+          python -m compileall .
+          pytest -q
+      - name: Stop application
+        if: always()
+        run: |
+          if [ -f /tmp/phase23-api.pid ]; then kill "$(cat /tmp/phase23-api.pid)" || true; fi
+      - name: Upload analysis artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase23-real-data-analysis
+          path: |
+            phase23-analysis.json
+            phase23-liquidity-status.json
+            phase23-opportunities.json
+            /tmp/phase23-api.log
+            data/phase23.db
+          if-no-files-found: warn
