@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -79,8 +80,11 @@ CREATE TABLE IF NOT EXISTS collection_runs (
 
 
 class Database:
+    _initialize_lock = threading.RLock()
+
     def __init__(self, path: str | Path = DATABASE_PATH):
         self.path = Path(path)
+        self._initialized = False
 
     def connect(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,9 +93,15 @@ class Database:
         return connection
 
     def initialize(self):
-        with self.connect() as connection:
-            self._migrate(connection)
-            connection.executescript(SCHEMA)
+        if self._initialized:
+            return
+        with self._initialize_lock:
+            if self._initialized:
+                return
+            with self.connect() as connection:
+                self._migrate(connection)
+                connection.executescript(SCHEMA)
+            self._initialized = True
 
     @staticmethod
     def _columns(connection, table: str) -> set[str]:
@@ -107,7 +117,7 @@ class Database:
                     server TEXT NOT NULL DEFAULT 'east',
                     item_id TEXT NOT NULL, city TEXT NOT NULL, quality INTEGER NOT NULL,
                     sell_price_min INTEGER, sell_price_min_date TEXT,
-                    buy_price_max INTEGER, buy_price_max_date TEXT,
+                    buy_price_max INTEGER, buy_price_max_date INTEGER,
                     updated_at TEXT NOT NULL,
                     UNIQUE(server, item_id, city, quality)
                 );
@@ -121,9 +131,6 @@ class Database:
             connection.execute(f"ALTER TABLE market_price_history ADD COLUMN server TEXT NOT NULL DEFAULT '{ALBION_SERVER}'")
         if "collection_runs" in tables and "server" not in self._columns(connection, "collection_runs"):
             connection.execute(f"ALTER TABLE collection_runs ADD COLUMN server TEXT NOT NULL DEFAULT '{ALBION_SERVER}'")
-        if "market_price_history" in tables:
-            connection.execute("DROP INDEX IF EXISTS idx_market_price_history_lookup")
-            connection.execute("CREATE INDEX idx_market_price_history_lookup ON market_price_history(server, item_id, city, quality, recorded_at)")
         if "market_liquidity_orders" in tables:
             columns = self._columns(connection, "market_liquidity_orders")
             if "first_seen" not in columns:
@@ -133,8 +140,6 @@ class Database:
             if "status" not in columns:
                 connection.execute("ALTER TABLE market_liquidity_orders ADD COLUMN status TEXT NOT NULL DEFAULT 'ACTIVE'")
             connection.execute("UPDATE market_liquidity_orders SET first_seen=COALESCE(first_seen, observed_at), last_seen=COALESCE(last_seen, observed_at), status=COALESCE(status, 'ACTIVE')")
-            connection.execute("DROP INDEX IF EXISTS idx_market_liquidity_lookup")
-            connection.execute("CREATE INDEX idx_market_liquidity_lookup ON market_liquidity_orders(server, item_id, city, quality, side, status, last_seen, expires_at, price)")
         connection.execute("""CREATE TABLE IF NOT EXISTS market_liquidity_order_observations (
             id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, server TEXT NOT NULL, order_id TEXT,
             item_id TEXT NOT NULL, city TEXT NOT NULL, quality INTEGER NOT NULL, side TEXT NOT NULL,
