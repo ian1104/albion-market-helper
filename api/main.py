@@ -47,24 +47,27 @@ def _nats_url(server: str) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if AODP_NATS_ENABLED:
-        for server_name in AODP_NATS_SERVERS:
-            consumer = AODPNatsConsumer(
-                AODPNatsAdapter(), database, server=server_name,
-                nats_url=_nats_url(server_name), subject=AODP_NATS_SUBJECT,
-            )
-            nats_consumers[server_name] = consumer
-            nats_tasks[server_name] = asyncio.create_task(consumer.start(), name=f"aodp-nats-{server_name}")
-    yield
-    for consumer in nats_consumers.values():
-        await consumer.stop()
-    for task in nats_tasks.values():
-        task.cancel()
-    if nats_tasks:
-        await asyncio.gather(*nats_tasks.values(), return_exceptions=True)
-    nats_tasks.clear()
-    nats_consumers.clear()
-    scheduler.stop()
+    database.initialize()
+    try:
+        if AODP_NATS_ENABLED:
+            for server_name in AODP_NATS_SERVERS:
+                consumer = AODPNatsConsumer(
+                    AODPNatsAdapter(), database, server=server_name,
+                    nats_url=_nats_url(server_name), subject=AODP_NATS_SUBJECT,
+                )
+                nats_consumers[server_name] = consumer
+                nats_tasks[server_name] = asyncio.create_task(consumer.start(), name=f"aodp-nats-{server_name}")
+        yield
+    finally:
+        for consumer in nats_consumers.values():
+            await consumer.stop()
+        for task in nats_tasks.values():
+            task.cancel()
+        if nats_tasks:
+            await asyncio.gather(*nats_tasks.values(), return_exceptions=True)
+        nats_tasks.clear()
+        nats_consumers.clear()
+        scheduler.stop()
 
 
 app = FastAPI(title="Albion Market Helper", lifespan=lifespan)
@@ -188,7 +191,7 @@ def market_quality(range: str = Query("all"), start: str | None = None, end: str
 
 @app.get("/api/market/analysis")
 def market_analysis(item_id: str = Query(..., min_length=1), city: str = Query(..., min_length=1),
-                    quality: int = Query(..., ge=1), range: str = Query("24h"),
+                    quality: int = Query(...), range: str = Query("24h"),
                     start: str | None = None, end: str | None = None, server: str = ALBION_SERVER):
     _validate_server(server)
     _validate_range(range)
@@ -266,11 +269,16 @@ def liquidity_status(server: str = ALBION_SERVER) -> dict[str, Any]:
         "source": "aodp-nats",
         "enabled": AODP_NATS_ENABLED and server in AODP_NATS_SERVERS,
         "connected": bool(consumer and consumer._client is not None and not consumer._client.is_closed),
+        "subscription_active": consumer.subscription_active if consumer else False,
         "messages_received": consumer.messages_received if consumer else 0,
+        "orders_parsed": consumer.orders_parsed if consumer else 0,
         "orders_saved": consumer.orders_saved if consumer else 0,
         "invalid_messages": consumer.invalid_messages if consumer else 0,
         "connection_attempts": consumer.connection_attempts if consumer else 0,
+        "reconnect_count": consumer.reconnect_count if consumer else 0,
         "last_message_at": consumer.last_message_at if consumer else None,
+        "last_successful_persistence": consumer.last_successful_persistence if consumer else None,
+        "last_error": consumer.last_error if consumer else None,
         "order_counts": counts,
         "stale_minutes": AODP_NATS_STALE_MINUTES,
     }
