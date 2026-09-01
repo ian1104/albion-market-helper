@@ -117,7 +117,7 @@ class Database:
                     server TEXT NOT NULL DEFAULT 'east',
                     item_id TEXT NOT NULL, city TEXT NOT NULL, quality INTEGER NOT NULL,
                     sell_price_min INTEGER, sell_price_min_date TEXT,
-                    buy_price_max INTEGER, buy_price_max_date INTEGER,
+                    buy_price_max INTEGER, buy_price_max_date TEXT,
                     updated_at TEXT NOT NULL,
                     UNIQUE(server, item_id, city, quality)
                 );
