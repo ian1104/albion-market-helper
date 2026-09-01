@@ -80,7 +80,7 @@ jobs:
           echo '--- final opportunities ---'
           curl --fail --silent 'http://127.0.0.1:8000/api/opportunities?server=east&capital=1000000' || true
           echo
-          echo '--- database counts ---'
+          echo '--- database counts before restart ---'
           python - <<'PY'
           import sqlite3, json
           db = sqlite3.connect('/tmp/amh-phase21-live.db')
@@ -100,3 +100,29 @@ jobs:
           if result['market_liquidity_orders'] == 0:
               raise SystemExit('No live NATS orders observed during application lifecycle test')
           PY
+          echo '--- graceful application shutdown ---'
+          kill "$SERVER_PID"
+          wait "$SERVER_PID" || true
+          echo '--- restart with the same SQLite database ---'
+          DATABASE_PATH=/tmp/amh-phase21-live.db AODP_NATS_ENABLED=true AODP_NATS_SERVERS=east,west,europe python run_server.py >/tmp/amh-phase21-server-restart.log 2>&1 &
+          RESTART_PID=$!
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/ >/tmp/restart-root.json; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8000/ >/tmp/restart-root.json
+          cat /tmp/restart-root.json
+          curl --fail --silent 'http://127.0.0.1:8000/api/liquidity/status?server=west' || true
+          echo
+          python - <<'PY'
+          import sqlite3
+          db = sqlite3.connect('/tmp/amh-phase21-live.db')
+          current = db.execute('SELECT COUNT(*) FROM market_liquidity_orders').fetchone()[0]
+          observations = db.execute('SELECT COUNT(*) FROM market_liquidity_order_observations').fetchone()[0]
+          print({'current_orders_after_restart': current, 'observations_after_restart': observations})
+          if current == 0:
+              raise SystemExit('SQLite data was not preserved across application restart')
+          PY
+          kill "$RESTART_PID"
+          wait "$RESTART_PID" || true
+          trap - EXIT
