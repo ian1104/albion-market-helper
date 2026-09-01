@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any, Awaitable, Callable
 
 from config import AODP_LOCATION_NAMES, AODP_NATS_RECONNECT_MAX_SECONDS, AODP_NATS_RECONNECT_SECONDS
@@ -115,6 +116,7 @@ class AODPNatsConsumer:
         self._stop = asyncio.Event()
         self._client = None
         self._subscription = None
+        self._persistence_lock = asyncio.Lock()
         self.messages_received = 0
         self.orders_parsed = 0
         self.orders_saved = 0
@@ -125,6 +127,16 @@ class AODPNatsConsumer:
         self.last_message_at: str | None = None
         self.last_successful_persistence: str | None = None
         self.last_error: str | None = None
+        self.last_persistence_duration_ms: float | None = None
+        self.max_persistence_duration_ms: float = 0.0
+        self.persistence_failures = 0
+
+    def _persist_orders_sync(self, orders: list[NormalizedMarketOrder]) -> int:
+        saved = 0
+        for order in orders:
+            self.database.upsert_liquidity_order(order)
+            saved += 1
+        return saved
 
     async def _handle_message(self, message) -> None:
         self.messages_received += 1
@@ -132,14 +144,19 @@ class AODPNatsConsumer:
         try:
             orders = self.adapter.normalize(message.data, server=self.server)
             self.orders_parsed += len(orders)
-            saved = 0
-            for order in orders:
-                self.database.upsert_liquidity_order(order)
-                saved += 1
+            if not orders:
+                return
+            started = time.perf_counter()
+            async with self._persistence_lock:
+                saved = await asyncio.to_thread(self._persist_orders_sync, orders)
+            duration_ms = (time.perf_counter() - started) * 1000.0
+            self.last_persistence_duration_ms = duration_ms
+            self.max_persistence_duration_ms = max(self.max_persistence_duration_ms, duration_ms)
             self.orders_saved += saved
             if saved:
                 self.last_successful_persistence = utc_now()
         except Exception as exc:
+            self.persistence_failures += 1
             self.invalid_messages += 1
             self.last_error = f"{type(exc).__name__}: {exc}"
             logger.warning("AODP NATS message failed for %s: %s", self.server, exc)
