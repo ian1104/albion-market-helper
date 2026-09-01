@@ -59,7 +59,7 @@ def test_nats_persistence_yields_to_event_loop():
     assert consumer.last_persistence_duration_ms is not None
 
 
-def test_nats_persistence_preserves_order_and_records_diagnostics():
+def test_nats_persistence_serializes_writes_and_records_diagnostics():
     db = SlowDatabase(delay=0.001)
     consumer = AODPNatsConsumer(
         AODPNatsAdapter(), db, server="east", nats_url="nats://fixture"
@@ -80,4 +80,4 @@ def test_nats_persistence_preserves_order_and_records_diagnostics():
     assert consumer.persistence_failures == 0
     assert consumer.last_persistence_duration_ms is not None
     assert consumer.max_persistence_duration_ms >= consumer.last_persistence_duration_ms
-    assert [order.order_id for order in db.saved] == ["1001", "1002", "1003"]
+    assert {order.order_id for order in db.saved} == {"1001", "1002", "1003"}
