@@ -8,7 +8,7 @@ on:
 jobs:
   phase23-analysis:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
     env:
       AODP_NATS_ENABLED: "true"
       AODP_NATS_SERVERS: "east,west,europe"
@@ -48,15 +48,23 @@ jobs:
       - name: Observe real NATS order book
         run: sleep 120
       - name: Analyze real database
-        run: python scripts/phase23_analysis.py --db data/phase23.db --server east --output phase23-analysis.json
+        run: |
+          for server in east west europe; do
+            python -m scripts.phase23_analysis --db data/phase23.db --server "$server" --output "phase23-${server}.json"
+          done
       - name: API smoke test
         run: |
-          curl -fsS "http://127.0.0.1:8000/api/liquidity/status" > phase23-liquidity-status.json
-          curl -fsS "http://127.0.0.1:8000/api/opportunities?server=east" > phase23-opportunities.json
-      - name: Regression tests
+          curl -fsS "http://127.0.0.1:8000/api/liquidity/status?server=east" > phase23-liquidity-status-east.json
+          curl -fsS "http://127.0.0.1:8000/api/opportunities?server=east" > phase23-opportunities-east.json
+      - name: Python regression
         run: |
           python -m compileall .
           pytest -q
+      - name: Frontend production build
+        working-directory: frontend
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
       - name: Stop application
         if: always()
         run: |
@@ -67,9 +75,11 @@ jobs:
         with:
           name: phase23-real-data-analysis
           path: |
-            phase23-analysis.json
-            phase23-liquidity-status.json
-            phase23-opportunities.json
+            phase23-east.json
+            phase23-west.json
+            phase23-europe.json
+            phase23-liquidity-status-east.json
+            phase23-opportunities-east.json
             /tmp/phase23-api.log
             data/phase23.db
           if-no-files-found: warn
