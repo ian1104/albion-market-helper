@@ -85,6 +85,7 @@ class Database:
     def __init__(self, path: str | Path = DATABASE_PATH):
         self.path = Path(path)
         self._initialized = False
+        self._initialized_path: Path | None = None
 
     def connect(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -93,15 +94,18 @@ class Database:
         return connection
 
     def initialize(self):
-        if self._initialized:
+        current_path = self.path.resolve()
+        if self._initialized and self._initialized_path == current_path and self.path.exists():
             return
         with self._initialize_lock:
-            if self._initialized:
+            current_path = self.path.resolve()
+            if self._initialized and self._initialized_path == current_path and self.path.exists():
                 return
             with self.connect() as connection:
                 self._migrate(connection)
                 connection.executescript(SCHEMA)
             self._initialized = True
+            self._initialized_path = current_path
 
     @staticmethod
     def _columns(connection, table: str) -> set[str]:
@@ -193,7 +197,6 @@ class Database:
         if stale_minutes < 0:
             raise ValueError("stale_minutes must be >= 0")
         current = datetime.fromisoformat((now or datetime.now(timezone.utc).isoformat()).replace("Z", "+00:00")).astimezone(timezone.utc)
-        current_s = current.isoformat().replace("+00:00", "Z")
         cutoff_s = (current - timedelta(minutes=stale_minutes)).isoformat().replace("+00:00", "Z")
         self.initialize()
         clauses = ["1=1"]
