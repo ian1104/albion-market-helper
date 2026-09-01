@@ -155,6 +155,17 @@ class AODPNatsConsumer:
             self.orders_saved += saved
             if saved:
                 self.last_successful_persistence = utc_now()
+            if duration_ms >= 100.0:
+                logger.warning(
+                    "AODP NATS persistence slow for %s: %.1f ms (messages=%d saved=%d failures=%d)",
+                    self.server, duration_ms, self.messages_received, self.orders_saved, self.persistence_failures,
+                )
+            elif self.messages_received % 100 == 0:
+                logger.info(
+                    "AODP NATS progress for %s: messages=%d parsed=%d saved=%d max_persist_ms=%.1f failures=%d",
+                    self.server, self.messages_received, self.orders_parsed, self.orders_saved,
+                    self.max_persistence_duration_ms, self.persistence_failures,
+                )
         except Exception as exc:
             self.persistence_failures += 1
             self.invalid_messages += 1
@@ -176,7 +187,7 @@ class AODPNatsConsumer:
 
     async def _on_error(self, error) -> None:
         self.last_error = f"{type(error).__name__}: {error}"
-        logger.warning("AODP NATS error for %s: %s", self.server, error)
+        logger.warning("AODP NATS error for %s: {error}", self.server)
 
     async def _connect_once(self) -> None:
         try:
