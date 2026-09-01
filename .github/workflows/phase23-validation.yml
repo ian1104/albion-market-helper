@@ -25,6 +25,8 @@ jobs:
         run: pip install -r requirements.txt
       - name: Initialize database
         run: python -c "from db.database import Database; Database().initialize()"
+      - name: SQLite concurrency regression
+        run: pytest -q tests/test_database_initialization_concurrency.py
       - name: Start application
         run: |
           nohup uvicorn api.main:app --host 127.0.0.1 --port 8000 > /tmp/phase23-api.log 2>&1 &
