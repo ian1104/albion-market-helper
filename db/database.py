@@ -109,6 +109,9 @@ class Database:
 
     def _migrate(self, connection):
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        rebuild_history_index = False
+        rebuild_liquidity_index = False
+
         if "market_prices" in tables and "server" not in self._columns(connection, "market_prices"):
             connection.execute("ALTER TABLE market_prices RENAME TO market_prices_legacy")
             connection.executescript("""
@@ -129,17 +132,29 @@ class Database:
             connection.execute("DROP TABLE market_prices_legacy")
         if "market_price_history" in tables and "server" not in self._columns(connection, "market_price_history"):
             connection.execute(f"ALTER TABLE market_price_history ADD COLUMN server TEXT NOT NULL DEFAULT '{ALBION_SERVER}'")
+            rebuild_history_index = True
         if "collection_runs" in tables and "server" not in self._columns(connection, "collection_runs"):
             connection.execute(f"ALTER TABLE collection_runs ADD COLUMN server TEXT NOT NULL DEFAULT '{ALBION_SERVER}'")
+        if rebuild_history_index:
+            connection.execute("DROP INDEX IF EXISTS idx_market_price_history_lookup")
+            connection.execute("CREATE INDEX idx_market_price_history_lookup ON market_price_history(server, item_id, city, quality, recorded_at)")
+
         if "market_liquidity_orders" in tables:
             columns = self._columns(connection, "market_liquidity_orders")
             if "first_seen" not in columns:
                 connection.execute("ALTER TABLE market_liquidity_orders ADD COLUMN first_seen TEXT")
+                rebuild_liquidity_index = True
             if "last_seen" not in columns:
                 connection.execute("ALTER TABLE market_liquidity_orders ADD COLUMN last_seen TEXT")
+                rebuild_liquidity_index = True
             if "status" not in columns:
                 connection.execute("ALTER TABLE market_liquidity_orders ADD COLUMN status TEXT NOT NULL DEFAULT 'ACTIVE'")
+                rebuild_liquidity_index = True
             connection.execute("UPDATE market_liquidity_orders SET first_seen=COALESCE(first_seen, observed_at), last_seen=COALESCE(last_seen, observed_at), status=COALESCE(status, 'ACTIVE')")
+            if rebuild_liquidity_index:
+                connection.execute("DROP INDEX IF EXISTS idx_market_liquidity_lookup")
+                connection.execute("CREATE INDEX idx_market_liquidity_lookup ON market_liquidity_orders(server, item_id, city, quality, side, status, last_seen, expires_at, price)")
+
         connection.execute("""CREATE TABLE IF NOT EXISTS market_liquidity_order_observations (
             id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, server TEXT NOT NULL, order_id TEXT,
             item_id TEXT NOT NULL, city TEXT NOT NULL, quality INTEGER NOT NULL, side TEXT NOT NULL,
