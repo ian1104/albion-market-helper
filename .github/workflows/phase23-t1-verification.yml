@@ -1,0 +1,81 @@
+name: Phase 23-T.1 Automated Verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  sqlite-regression:
+    name: SQLite concurrency regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      AODP_NATS_ENABLED: "false"
+      AODP_NATS_SERVERS: "east"
+    steps:
+      - name: Checkout exact commit SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Report execution SHA
+        run: echo "Execution SHA: $GITHUB_SHA"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: SQLite concurrency regression
+        run: pytest -q tests/test_database_initialization_concurrency.py
+
+  python-regression:
+    name: Python regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      AODP_NATS_ENABLED: "false"
+      AODP_NATS_SERVERS: "east"
+    steps:
+      - name: Checkout exact commit SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Report execution SHA
+        run: echo "Execution SHA: $GITHUB_SHA"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Python compileall
+        run: python -m compileall .
+      - name: Python full regression
+        run: pytest -q
+
+  frontend-build:
+    name: Frontend production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout exact commit SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Report execution SHA
+        run: echo "Execution SHA: $GITHUB_SHA"
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Frontend dependency install
+        run: npm install --no-audit --no-fund
+      - name: Frontend production build
+        run: npm run build
