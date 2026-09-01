@@ -6,152 +6,130 @@ Albion Market Helper — Albion Online market data collection, persistence, anal
 
 ## CURRENT PHASE
 
-Phase 23-T.1 — SQLite initialization/concurrency regression correction and verification.
+Phase 23-T.2 — GitHub Actions Automated Verification Pipeline
 
-This handoff records a documentation-only checkpoint. No application code was changed in this task.
+**STATUS: VERIFIED / PASS**
 
 ## CURRENT HEAD SHA
 
-After this documentation-only commit sequence, `main` advanced from the previously verified application HEAD `3e0160a0c8220f98f26a62af92448d7955713ed2` to the documentation commits. The final commit of this documentation task is recorded in the task report. Before any further development, re-read `main` and use its actual current HEAD as the source of truth.
+Verification target/application commit:
 
-Application-code baseline immediately before documentation:
+`d15f10bd4b91053b79993cd8842f37bd9950b085`
 
-`3e0160a0c8220f98f26a62af92448d7955713ed2`
+This documentation update advances `main`. Before any future development, re-check the actual `main` HEAD and use the exact verified CI SHA separately from later documentation commits.
 
 ## WORKING TREE STATUS
 
-GitHub API inspection can establish committed repository state but cannot establish the cleanliness of a separate local working tree. No claim of local working-tree cleanliness is made.
+No local working-tree state can be established through the GitHub API. Repository changes in this handoff are documentation-only.
 
-The documentation task added only:
-
-- `docs/PROJECT_STATE.md`
-- `docs/ROADMAP.md`
-- `docs/HANDOFF.md`
-
-No application source file was modified.
+Application code remains unchanged by this documentation task.
 
 ## WHAT WAS CONFIRMED
 
-- GitHub `main` was rechecked before documentation work.
-- The application baseline HEAD was `3e0160a0c8220f98f26a62af92448d7955713ed2`.
-- The repository did not contain `docs/PROJECT_STATE.md`, `docs/ROADMAP.md`, or `docs/HANDOFF.md` before this task.
-- Current `db/database.py` contains shared `threading.RLock()` initialization synchronization, `_initialized`, `_initialized_path`, path-aware initialization caching, and migration-aware index rebuild behavior.
-- Current regression coverage contains concurrent initialization, repeated initialization, and concurrent liquidity persistence tests.
-- Current Phase 23 workflow runs the dedicated SQLite concurrency regression and later disables NATS for the full Python regression step.
-- Historical CI Run `33500437389` ran at `5bbc7e69af39dd940fcc6360b9dda51ef95dfee5`, not the current application HEAD.
+- GitHub `main` was rechecked before this documentation update.
+- Deterministic workflow: `.github/workflows/phase23-t1-verification.yml`.
+- Run `33519639248` completed successfully against execution SHA `d15f10bd4b91053b79993cd8842f37bd9950b085`.
+- Workflow checkout explicitly used that SHA, and job logs reported the same execution SHA.
+- SQLite concurrency regression passed: 3 tests passed.
+- Python compileall passed.
+- Full pytest passed: 99 passed, 1 warning, 3.35s.
+- Frontend dependency installation passed.
+- Frontend production build passed.
+- Non-fatal warnings were emitted by GitHub Actions, pytest, and Vite.
 
 ## WHAT WAS NOT CONFIRMED
 
-- A fresh local pytest execution against the current application HEAD was not possible in the available execution environment.
-- The exact current-HEAD result of the SQLite concurrency test is therefore unknown.
-- The exact current-HEAD result of `tests/test_liquidity.py` and `tests/test_phase21_application_lifecycle.py` is unknown.
-- The exact current-HEAD full pytest result is unknown.
-- `compileall` was not executed against the current application HEAD in this environment.
-- Frontend install/build was not executed against the current application HEAD in this environment.
-- No verified GitHub Actions run was available for application HEAD `3e0160a0c8220f98f26a62af92448d7955713ed2` during inspection.
-- The historical Termux index exception was not captured with thread stacks, so the exact runtime interleaving remains unproven.
+- No fresh Termux live runtime was performed during this task.
+- Exact historical runtime thread interleaving for `idx_market_price_history_lookup already exists` remains unproven.
+- The later documentation-only commits are not covered by Run `33519639248`.
+- Local working-tree cleanliness cannot be established from GitHub API inspection alone.
 
 ## CHANGES MADE
 
 Documentation only:
 
-1. Added `docs/PROJECT_STATE.md` as the persistent current-state record.
-2. Added `docs/ROADMAP.md` to separate future plans from implementation state.
-3. Added `docs/HANDOFF.md` for future chat/session recovery.
+- Updated `docs/PROJECT_STATE.md` with deterministic CI evidence.
+- Updated `docs/ROADMAP.md` to mark Phase 23-T.2 verified.
+- Updated `docs/HANDOFF.md` with this recovery checkpoint.
 
-No Python, FastAPI, SQLite schema, NATS, or frontend application code was changed.
+No `db/`, `services/`, `api/`, `frontend/src/`, or test source was changed.
+No Termux server or runtime database was modified.
 
 ## TEST RESULTS
 
-No tests were executed in this documentation task.
-
-The last execution state remains:
+Verified through GitHub Actions Run `33519639248`:
 
 ```text
-Current HEAD execution: NOT VERIFIED
+SQLite concurrency regression: PASS — 3 passed
+Python compileall: PASS
+Full pytest: PASS — 99 passed, 1 warning, 3.35s
+Frontend dependency install: PASS
+Frontend production build: PASS
 ```
-
-Do not infer PASS/FAIL from the existence of the documentation commits.
 
 ## CI RESULTS + RUN SHA
 
-Current application baseline:
-
 ```text
-HEAD: 3e0160a0c8220f98f26a62af92448d7955713ed2
-Verified CI run: none available
+Workflow: Phase 23-T.1 Automated Verification
+Run ID: 33519639248
+Execution SHA: d15f10bd4b91053b79993cd8842f37bd9950b085
+Verification target SHA: d15f10bd4b91053b79993cd8842f37bd9950b085
+SHA MATCH: YES
+Overall: PASS
 ```
 
-Historical CI only:
-
-```text
-Run: 33500437389
-SHA: 5bbc7e69af39dd940fcc6360b9dda51ef95dfee5
-Result: 97 passed / 2 failed
-```
-
-Historical failures were:
-
-- `test_liquidity_status_and_summary_endpoints`: expected `enabled=False`, received `True`.
-- `test_liquidity_status_exposes_live_consumer_state`: `sqlite3.OperationalError: no such table: market_liquidity_orders`.
-
-Those failures must not be treated as current HEAD failures.
+All three jobs completed successfully.
 
 ## RUNTIME RESULTS
 
-Historical Phase 23-T Termux result supplied by the project handoff:
+Historical Phase 23-T Termux evidence:
 
 - approximately 56 minutes of FastAPI HTTP responsiveness,
-- East NATS connected,
+- East NATS connection maintained,
 - subscription active,
-- real AODP NATS messages received,
-- real message parsing,
-- SQLite persistence,
+- real AODP NATS messages received and parsed,
+- SQLite persistence observed,
 - event-loop hang not reproduced,
-- more than 5,900 messages received,
-- more than 5,900 orders persisted,
+- more than 5,900 messages/orders observed,
 - SQLite `PRAGMA integrity_check` returned `ok`.
 
-Observed historical runtime error:
+Historical runtime error retained as evidence:
 
 ```text
 OperationalError:
 index idx_market_price_history_lookup already exists
 ```
 
-The server and NATS consumer continued operating afterward. The code-level race capability was identified and subsequent synchronization/migration changes were committed, but the precise runtime thread interleaving was not captured.
+The server and consumer reportedly continued operating. The exact thread interleaving was not captured.
+
+No Termux runtime was modified during Phase 23-T.2 CI verification.
 
 ## KNOWN ISSUES
 
-- Current HEAD execution evidence is still missing.
-- Current HEAD CI evidence is still missing.
-- The historical SQLite index exception remains important runtime evidence even though later code changed the initialization path.
+- Non-fatal GitHub Actions Node.js 20 deprecation warnings for checkout/setup actions.
+- One non-fatal Starlette/httpx TestClient deprecation warning in pytest.
+- One non-fatal Vite CSS minification warning during frontend production build.
+- Historical SQLite index race remains relevant runtime evidence, although the current deterministic concurrency regression passed.
 
 ## CURRENT RISK
 
-The primary risk is verification debt, not an identified current application failure: source-level fixes exist, but the current HEAD has not yet been executed through the required regression/build sequence in the available environment.
+The deterministic regression/build path is verified for SHA `d15f10bd...`. Remaining risk is evidence separation: CI verification does not replace live Termux/NATS runtime verification, and the historical runtime exception's exact interleaving remains unproven.
 
 ## NEXT EXACT STEPS
 
-1. Reconfirm the actual GitHub `main` HEAD because documentation commits have advanced the branch after application baseline `3e0160a0c8220f98f26a62af92448d7955713ed2`.
-2. Run `pytest -q tests/test_database_initialization_concurrency.py`.
-3. Run `pytest -q tests/test_liquidity.py tests/test_phase21_application_lifecycle.py`.
-4. Run `pytest -q`.
-5. Run `python -m compileall .`.
-6. Inspect frontend package configuration, then run `npm install` and `npm run build` if dependencies/network permit.
-7. If anything fails, capture the exact traceback and diagnose before changing code.
-8. Only if a current-HEAD failure is reproduced, make the smallest in-scope correction and rerun regression.
-9. Confirm GitHub Actions for the exact resulting commit SHA.
-10. Update `PROJECT_STATE.md` and `HANDOFF.md` again with the new verified results.
+1. Reconfirm the actual GitHub `main` HEAD after this documentation commit.
+2. Treat Run `33519639248` / SHA `d15f10bd4b91053b79993cd8842f37bd9950b085` as the completed Phase 23-T.2 deterministic verification evidence.
+3. Continue with the next roadmap phase from the actual current `main` HEAD, or perform a separately authorized bounded Termux runtime validation if live evidence is required.
+4. Before any application change, re-check current source, tests, and current HEAD rather than relying on this handoff alone.
 
 ## DO NOT DO
 
 - Do not treat historical Run `33500437389` as current.
-- Do not claim tests passed when they were not executed.
-- Do not weaken/delete assertions.
+- Do not treat Run `33519639248` as coverage of the later documentation-only commits.
+- Do not weaken or delete assertions.
 - Do not remove concurrency regression tests.
-- Do not refactor unrelated code.
-- Do not change NATS architecture during SQLite regression work.
+- Do not perform unrelated refactors.
+- Do not change NATS architecture as part of this verification work.
 - Do not stop/restart a live Termux server without explicit approval.
 - Do not delete/reset the runtime database without explicit approval.
 - Do not infer a specific runtime thread interleaving without captured evidence.
