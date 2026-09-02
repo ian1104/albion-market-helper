@@ -57,6 +57,12 @@ async def lifespan(app: FastAPI):
                 )
                 nats_consumers[server_name] = consumer
                 nats_tasks[server_name] = asyncio.create_task(consumer.start(), name=f"aodp-nats-{server_name}")
+
+        await asyncio.to_thread(
+            scheduler.start,
+            initial_collection=True,
+        )
+
         yield
     finally:
         for consumer in nats_consumers.values():

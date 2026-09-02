@@ -34,9 +34,17 @@ def test_fastapi_lifespan_starts_and_stops_nats_collectors(monkeypatch):
             self.subscription_active = False
             events.append(("stop", self.server))
 
+    class FakeScheduler:
+        def start(self, initial_collection=True):
+            events.append(("scheduler_start", initial_collection))
+
+        def stop(self):
+            events.append(("scheduler_stop",))
+
     monkeypatch.setattr(main, "AODP_NATS_ENABLED", True)
     monkeypatch.setattr(main, "AODP_NATS_SERVERS", ("east", "west", "europe"))
     monkeypatch.setattr(main, "AODPNatsConsumer", FakeConsumer)
+    monkeypatch.setattr(main, "scheduler", FakeScheduler())
 
     with TestClient(main.app) as client:
         response = client.get("/")
@@ -49,6 +57,8 @@ def test_fastapi_lifespan_starts_and_stops_nats_collectors(monkeypatch):
     assert [event[0] for event in events].count("create") == 3
     assert [event[0] for event in events].count("start") == 3
     assert [event[0] for event in events].count("stop") == 3
+    assert ("scheduler_start", True) in events
+    assert ("scheduler_stop",) in events
     assert main.nats_consumers == {}
     assert main.nats_tasks == {}
 
