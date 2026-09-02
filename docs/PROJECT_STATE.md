@@ -4,15 +4,15 @@
 
 **Phase 23-T.3 — Backend ↔ Frontend Integration Verification**
 
-**STATUS: IN PROGRESS / NOT FULLY VERIFIED**
+**STATUS: VERIFIED / PASS**
 
-## CURRENT HEAD SHA
+## CURRENT HEAD / VERIFICATION BASELINE
 
-Current GitHub `main` HEAD at the start of Phase 23-T.3 verification:
+The Phase 23-T.3 application verification target was GitHub `main` SHA:
 
-`2b5004a1f49768871e610ad8865a8c7d6318b30e`
+`289843227fa74f49e77f9174a22c27532a5eb8d0`
 
-This is a documentation-only continuation after application commit `d15f10bd4b91053b79993cd8842f37bd9950b085`.
+This SHA contains the complete application change for the Phase 23-T.3 frontend API integration fix. Documentation closeout commits may advance `main` beyond this application verification SHA; the SHA above is the exact application revision against which the reported verification was performed.
 
 ## CURRENT ARCHITECTURE
 
@@ -32,174 +32,185 @@ Major layers:
 - StrategyRegistry / StrategyEngine / BusinessOpportunity aggregation.
 - React/Vite frontend Business Dashboard plus market-analysis and arbitrage views.
 
-## PHASE 23-T.3 SOURCE INSPECTION
+## PHASE 23-T.3 IMPLEMENTED
 
-The current `main` source was inspected before any modification.
+The application change is limited to two frontend files:
 
-Confirmed frontend market path:
+- `frontend/src/services/api.js`
+- `frontend/vite.config.js`
 
-`Market.jsx → api.market() → /api/market/prices + /api/market/analysis + /api/market/history + /api/market/spread`
+API base behavior:
 
-The frontend also uses:
-
-`/api/items/{item_id}`
-`/api/items/{item_id}/market`
-`/api/items/{item_id}/history`
-`/api/items/{item_id}/opportunities`
-
-Confirmed backend routes exist for all of the above paths.
-
-Confirmed response-shape compatibility at source level:
-
-- `/api/market/prices` returns an array; frontend uses the first row as `current`.
-- `/api/market/analysis` returns an analysis object.
-- `/api/market/history` returns an array; frontend consumes it as history.
-- `/api/market/spread` is optional in the frontend and does not cause market loading failure when unavailable.
-- `/api/items/{item_id}/market` returns `cities`; frontend consumes `marketResponse.cities`.
-- `/api/items/{item_id}/history` returns `history`; frontend consumes `historyResponse.history`.
-- `/api/items/{item_id}/opportunities` returns `opportunities`.
-
-Confirmed CORS source configuration:
-
-```text
-allow_origins=["*"]
-allow_credentials=False
-allow_methods=["*"]
-allow_headers=["*"]
+```js
+const API = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '' : 'http://127.0.0.1:8000');
 ```
 
-### Important integration finding
-
-`frontend/src/services/api.js` uses:
+Development Vite proxy:
 
 ```text
-import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+/api/* → http://127.0.0.1:8000/api/*
 ```
 
-No Vite proxy configuration was found in the current repository source inspection.
-
-Therefore, source-level evidence strongly suggests a Codespaces/browser deployment risk: when the browser is not running on the same host as FastAPI, `127.0.0.1:8000` refers to the browser client's localhost rather than the Codespace backend. This is a **strongly suspected cause** of the historical `시장의 데이터를 불러오지 못했습니다.` symptom, not a runtime-confirmed root cause.
+This makes development browser requests same-origin while preserving the explicit local FastAPI fallback outside development. Backend API routes, CORS, dependencies, tests, and business logic were not changed.
 
 ## VERIFIED FEATURES
 
-Existing deterministic CI evidence for application commit `d15f10bd4b91053b79993cd8842f37bd9950b085` remains valid:
+### Local verification at application SHA `289843227fa74f49e77f9174a22c27532a5eb8d0`
 
-- SQLite concurrency regression: PASS — 3 passed.
-- Python compileall: PASS.
-- Full pytest: PASS — 99 passed, 1 warning, 3.35s.
-- Frontend dependency installation: PASS.
-- Frontend production build: PASS.
-- Exact execution SHA match: PASS.
+- Full pytest: **99 passed, 1 warning, 2.21s**.
+- Python compileall: **PASS** — `python -m compileall -q .` exited successfully with no output.
+- Frontend production build: **PASS** — Vite `5.4.21`, 42 modules transformed, build completed successfully in 1.33s.
 
-These results verify build/regression behavior, not browser-level Backend ↔ Frontend integration.
+### Codespaces Browser ↔ Backend integration
 
-## PHASE 23-T.3 VERIFICATION MATRIX
+Actual Browser Network evidence:
 
-| Component | Current result |
+```text
+/api/sources?server=east → 200 OK
+```
+
+Request URL used the forwarded frontend origin:
+
+```text
+https://animated-bassoon-7xqw4xqq7jvhxxgg-5173.app.github.dev/api/sources?server=east
+```
+
+The browser did not directly call `127.0.0.1:8000`.
+
+Backend logs confirmed corresponding successful requests:
+
+```text
+GET /api/sources?server=east HTTP/1.1 200 OK
+GET /api/strategies HTTP/1.1 200 OK
+GET /api/sources?server=europe HTTP/1.1 200 OK
+GET /api/opportunities?server=east&sort=profit&limit=12 HTTP/1.1 200 OK
+GET /api/sources?server=west HTTP/1.1 200 OK
+```
+
+Verified runtime path:
+
+```text
+Browser
+  ↓
+Frontend :5173
+  ↓ /api/...
+Vite proxy
+  ↓
+127.0.0.1:8000
+  ↓
+FastAPI
+  ↓
+200 OK
+```
+
+### GitHub Actions
+
+Representative successful CI run at the exact application verification SHA:
+
+```text
+Run ID: 33615308345
+Execution SHA: 289843227fa74f49e77f9174a22c27532a5eb8d0
+Result: success
+```
+
+Confirmed successful stages include:
+
+- Python syntax — PASS
+- Full pytest — PASS
+- Frontend dependencies — PASS
+- Frontend production build — PASS
+- NATS validation — PASS
+- Live NATS ingestion — PASS
+- FastAPI runtime smoke test — PASS
+
+Separate runtime-validation Run `33615308321` also completed successfully.
+
+## VERIFICATION MATRIX
+
+| Component | Result |
 |---|---|
-| Frontend API URL | SOURCE VERIFIED; Codespaces risk identified |
-| Frontend endpoint | SOURCE VERIFIED |
-| FastAPI endpoint | SOURCE VERIFIED |
-| FastAPI → service | SOURCE VERIFIED for market analysis path |
-| Service → SQLite | SOURCE VERIFIED; runtime not re-executed in this phase |
-| CORS / proxy | CORS SOURCE PASS; proxy NOT FOUND / NOT VERIFIED |
-| Backend HTTP response | NOT TESTED in this phase |
-| Frontend receives JSON | NOT TESTED |
-| Frontend renders market data | NOT TESTED |
-| Test-data E2E | NOT TESTED |
-| Real AODP → UI path | NOT TESTED |
+| Frontend development API base | VERIFIED |
+| Vite `/api` proxy | VERIFIED |
+| Browser → Frontend | VERIFIED |
+| Frontend → FastAPI through proxy | VERIFIED |
+| `/api/sources` | 200 OK |
+| `/api/strategies` | 200 OK |
+| `/api/opportunities` | 200 OK |
+| Backend corresponding GET logs | VERIFIED |
+| Local pytest | 99 passed |
+| Python compileall | PASS |
+| Frontend production build | PASS |
+| Exact-SHA GitHub Actions | PASS |
 
-## UNVERIFIED FEATURES
+## UNVERIFIED / OUT OF SCOPE
 
-- No fresh browser/network capture was available during this verification.
-- No fresh local FastAPI runtime was executed during this phase.
-- No fresh React/Vite dev-server execution was executed during this phase.
-- No actual browser rendering of market data was observed.
-- No test-data SQLite → FastAPI → React E2E run was observed.
-- The historical Codespaces failure has not been reproduced with request URL, HTTP status, backend log, and browser rendering evidence.
+- This Phase does not establish a new full real-AODP-to-React data-content validation beyond the existing runtime/CI evidence listed above.
+- No new E2E framework was added.
+- No backend, CORS, dependency, or business-logic changes were made.
 
-## KNOWN ISSUES
+## KNOWN WARNINGS
 
-### Historical CI failure — not current verification
+- Pytest: one `StarletteDeprecationWarning` because using httpx with `starlette.testclient` is deprecated. This is non-fatal and unrelated to the Phase 23-T.3 API proxy change.
+- Frontend build: one non-fatal Vite CSS minification warning. This is unrelated to the Phase 23-T.3 API proxy change and was not modified.
+- GitHub Actions may retain Node.js 20 deprecation warnings for existing actions.
 
-Run `33500437389` executed at `5bbc7e69af39dd940fcc6360b9dda51ef95dfee5`, not the deterministic verification target. It reported `97 passed / 2 failed`.
+Warnings are not recorded as failures.
 
-### Historical Termux runtime error
+## HISTORICAL EVIDENCE / ISSUES
+
+Historical Termux runtime validation remains evidence of:
+
+- approximately 56 minutes of FastAPI responsiveness,
+- East NATS connection/subscription,
+- real AODP NATS messages received, parsed, and persisted,
+- more than 5,900 messages/orders observed,
+- SQLite `PRAGMA integrity_check` returning `ok`.
+
+Historical runtime error retained for context:
 
 ```text
 OperationalError:
 index idx_market_price_history_lookup already exists
 ```
 
-This remains historical evidence. The current deterministic SQLite concurrency regression passed.
-
-### Current integration risk
-
-The frontend API fallback is hard-coded to `http://127.0.0.1:8000`, while no Vite proxy configuration was found. This is compatible with a same-machine local browser/backend setup but is a significant Codespaces/browser-hosting risk.
-
-### Current warnings
-
-- GitHub Actions Node.js 20 deprecation warnings for checkout/setup actions.
-- One Starlette/httpx TestClient deprecation warning in pytest.
-- One Vite CSS minification warning during production build.
+The exact thread interleaving was not captured. The current deterministic SQLite concurrency regression passed.
 
 ## CURRENT RISKS
 
-- Backend ↔ Frontend runtime integration is not yet execution-verified.
-- The Codespaces localhost API-base issue is strongly suspected but not proven as the historical failure's root cause.
-- CI build success must not be treated as browser integration success.
+No Phase 23-T.3 blocker remains based on the completed verification evidence. The retained warnings above are non-fatal and unrelated to the Phase 23-T.3 integration fix.
 
 ## LAST TEST RESULTS
 
-Deterministic CI Run `33519639248` at SHA `d15f10bd4b91053b79993cd8842f37bd9950b085`:
-
 ```text
-SQLite concurrency regression: 3 passed
-Python compileall: PASS
-Full pytest: 99 passed, 1 warning, 3.35s
-Frontend dependency install: PASS
-Frontend production build: PASS
+Application verification SHA: 289843227fa74f49e77f9174a22c27532a5eb8d0
+pytest -q: 99 passed, 1 warning in 2.21s
+python -m compileall -q .: PASS
+cd frontend && npm run build: PASS
 ```
 
 ## LAST CI RESULT
 
 ```text
-Workflow: Phase 23-T.1 Automated Verification
-Run ID: 33519639248
-Execution SHA: d15f10bd4b91053b79993cd8842f37bd9950b085
-Verification target SHA: d15f10bd4b91053b79993cd8842f37bd9950b085
-SHA MATCH: YES
-Overall: PASS
+Run ID: 33615308345
+Execution SHA: 289843227fa74f49e77f9174a22c27532a5eb8d0
+Result: success
 ```
+
+Separate runtime-validation Run `33615308321`: success.
 
 ## LAST RUNTIME RESULT
 
-Historical Phase 23-T Termux validation remains the latest recorded live runtime evidence:
-
-- FastAPI responsiveness maintained for approximately 56 minutes.
-- East NATS connection/subscription maintained.
-- Real AODP NATS messages received, parsed, and persisted to SQLite.
-- More than 5,900 messages/orders observed.
-- SQLite `PRAGMA integrity_check` returned `ok`.
-
-No live runtime was modified during this Phase 23-T.3 source inspection.
+Codespaces Browser ↔ FastAPI integration was directly verified through the frontend forwarded origin and backend HTTP logs. `/api/sources`, `/api/strategies`, and `/api/opportunities` requests returned 200 OK through the Vite development proxy path.
 
 ## NEXT EXACT STEPS
 
-1. Obtain an actual executable environment containing the current `main` source and run the backend plus frontend.
-2. Capture the browser Network request made by `api.market()` and its HTTP status/response.
-3. Verify the browser can reach the FastAPI host rather than its own `127.0.0.1:8000`.
-4. Seed or use representative market data and verify SQLite → FastAPI → React rendering.
-5. If failure occurs, capture request URL, status, backend log, JSON response, and frontend parsing error before changing code.
-6. Only after runtime evidence identifies a real defect should a minimal application change be considered.
+Phase 23-T.3 is closed. Do not perform additional work under this phase. Future work must follow `docs/ROADMAP.md` and begin by re-checking the actual GitHub `main` HEAD and project-state documents.
 
 ## DO NOT DO
 
-- Do not mark Backend ↔ Frontend integration PASS from source inspection alone.
-- Do not mark frontend PASS merely because `npm run build` succeeds.
-- Do not mark E2E PASS merely because pytest succeeds.
-- Do not change `api.js`, Vite configuration, or backend routes solely from the Codespaces hypothesis without runtime confirmation.
+- Do not expand Phase 23-T.3 into unrelated feature development or refactoring.
+- Do not modify backend routes, CORS, dependencies, or tests solely to revisit this closed phase.
+- Do not delete or commit the locally observed untracked lockfiles merely for cleanup.
 - Do not stop/restart a live Termux server without explicit approval.
 - Do not delete/reset the runtime database without explicit approval.
 - Do not weaken regression assertions.
-- Do not perform unrelated refactors.
