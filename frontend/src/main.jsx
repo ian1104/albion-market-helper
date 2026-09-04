@@ -6,6 +6,7 @@ import { useBusinessData } from './hooks/useBusinessData';
 import { Sidebar, Header, MobileNav } from './components/Layout';
 import { OpportunityDrawer } from './components/common';
 import { DashboardPage, MarketPage, StrategyPage, PortfolioPage, InsightPage, SettingsPage } from './pages';
+import { api } from './services/api';
 
 const defaultProfile = { name: '', avatar: '', silver: '', items: [], server: 'east', minRoi: '', minProfit: '', risk: '' };
 
@@ -23,9 +24,31 @@ function App() {
   const [selected, setSelected] = useState(null);
   const [profile, setProfileState] = useState(readProfile);
   const [marketQuery, setMarketQuery] = useState({ itemId: '', city: '', quality: 1 });
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [status, setStatus] = useState(null);
+  const [statusLoading, setStatusLoading] = useState(false);
 
   const setProfile = value => { setProfileState(value); localStorage.setItem('amh-profile', JSON.stringify(value)); };
   const business = useBusinessData({ server, sort, capital, risk, strategy });
+
+  const refreshStatus = async () => {
+    setStatusLoading(true);
+    try {
+      setStatus(await api.systemStatus({ server }));
+    } finally {
+      setStatusLoading(false);
+    }
+  };
+
+  const toggleStatus = () => {
+    if (statusOpen) {
+      setStatusOpen(false);
+      return;
+    }
+
+    setStatusOpen(true);
+    void refreshStatus();
+  };
 
   const state = { server, setServer, names: { ...SERVER_NAMES, ...business.names }, capital, setCapital, risk, setRisk, strategy, setStrategy, sort, setSort, strategies: business.strategies, opportunities: business.opportunities, loading: business.loading, error: business.error };
 
@@ -42,7 +65,7 @@ function App() {
   if (page === 'insights') content = <InsightPage opportunities={business.opportunities}/>;
   if (page === 'settings') content = <SettingsPage profile={profile} setProfile={setProfile} names={{ ...SERVER_NAMES, ...business.names }}/>;
 
-  return <div className="app-shell"><Sidebar page={page} setPage={setPage}/><div className="main-shell"><Header page={page} refresh={business.refresh} refreshing={business.loading} profile={profile}/><main>{content}</main></div><OpportunityDrawer opportunity={selected} onClose={() => setSelected(null)} onMarket={openMarket}/><MobileNav page={page} setPage={setPage}/></div>;
+  return <div className="app-shell"><Sidebar page={page} setPage={setPage} statusOpen={statusOpen} status={status} statusLoading={statusLoading} onStatusToggle={toggleStatus} onStatusRefresh={refreshStatus}/><div className="main-shell"><Header page={page} refresh={business.refresh} refreshing={business.loading} profile={profile} statusOpen={statusOpen} status={status} statusLoading={statusLoading} onStatusToggle={toggleStatus} onStatusRefresh={refreshStatus}/><main>{content}</main></div><OpportunityDrawer opportunity={selected} onClose={() => setSelected(null)} onMarket={openMarket}/><MobileNav page={page} setPage={setPage}/></div>;
 }
 
 createRoot(document.getElementById('root')).render(<App/>);
