@@ -1,214 +1,224 @@
-# Albion Market Helper — Development Handoff
+# Albion Market Helper — Handoff
 
 ## PROJECT
 
-Albion Market Helper — Albion Online market data collection, persistence, analysis, liquidity, strategy aggregation, FastAPI API, and React dashboard.
+**Albion Market Helper**
+
+Repository:
+
+`ian1104/albion-market-helper`
+
+GitHub `main` is the permanent Source of Truth.
 
 ## CURRENT PHASE
 
-Phase 23-T.3 — Backend ↔ Frontend Integration Verification
+**Phase 24 — System Status Dashboard**
 
-**STATUS: VERIFIED / PASS — CLOSED**
+**STATUS: COMPLETED / VERIFIED**
 
-## APPLICATION VERIFICATION SHA
+Documentation closeout is being performed after the Phase 24 implementation and verification.
 
-Phase 23-T.3 application verification was performed against:
+## CURRENT HEAD SHA
 
-`289843227fa74f49e77f9174a22c27532a5eb8d0`
+`59499eadd5d37bbfbedd90ae2f21cb276f3d03ac`
 
-The documentation closeout commit may advance GitHub `main` beyond this application SHA. Future work must use the actual current `main` HEAD as source of truth.
+Commit:
+
+`feat: add system status dashboard`
+
+Parent:
+
+`88d5bfbadb3092df8875db9f8823428f2a34e0d7`
 
 ## WORKING TREE STATUS
 
-At the time of final local verification, Codespaces reported these untracked files:
+The Phase 24 application changes already exist in the working tree.
 
-```text
-?? frontend/package-lock.json
-?? package-lock.json
-```
+Known existing changes:
 
-They were not deleted and were not committed as part of Phase 23-T.3.
+- `frontend/src/components/Layout.jsx`
+- `frontend/src/main.jsx`
+- `frontend/src/services/api.js`
+- `frontend/src/style.css`
+- `frontend/vite.config.js`
+
+Known existing untracked files:
+
+- `frontend/package-lock.json`
+- `package-lock.json`
+
+These files must be preserved.
+
+The documentation closeout modifies only:
+
+- `docs/PROJECT_STATE.md`
+- `docs/ROADMAP.md`
+- `docs/HANDOFF.md`
+
+No commit or push is part of this documentation closeout.
 
 ## WHAT WAS CONFIRMED
 
-### Application changes
+### Phase 24 implementation
 
-Exactly two application files were changed for the Phase 23-T.3 fix:
+The System Status Dashboard was implemented in the frontend.
 
-- `frontend/src/services/api.js`
-- `frontend/vite.config.js`
+Status semantics include:
 
-The API base now uses same-origin during Vite development:
+- Backend API
+- Collector
+- AODP NATS / Liquidity
+- Database
+- Market Engine
 
-```js
-const API = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '' : 'http://127.0.0.1:8000');
-```
+### Collector startup integration
 
-Vite development proxy:
+The application lifecycle starts the collector scheduler during FastAPI startup.
 
-```text
-/api/* → http://127.0.0.1:8000/api/*
-```
+This resolved the Phase 23-T.4 startup integration issue.
 
-No backend route, CORS, dependency, test, or business-logic changes were made.
+### Verification
 
-### Local verification
+Phase 24 verification confirmed:
 
-At application SHA `289843227fa74f49e77f9174a22c27532a5eb8d0`:
-
-```text
-pytest -q
-99 passed, 1 warning in 2.21s
-
-python -m compileall -q .
-PASS
-
-cd frontend && npm run build
-PASS
-vite v5.4.21
-42 modules transformed
-built in 1.33s
-```
-
-### Codespaces Browser ↔ Backend integration
-
-Browser Network:
-
-```text
-/api/sources?server=east → 200 OK
-```
-
-Request used the forwarded frontend origin rather than browser-local FastAPI:
-
-```text
-https://animated-bassoon-7xqw4xqq7jvhxxgg-5173.app.github.dev/api/sources?server=east
-```
-
-Backend logs confirmed:
-
-```text
-GET /api/sources?server=east HTTP/1.1 200 OK
-GET /api/strategies HTTP/1.1 200 OK
-GET /api/sources?server=europe HTTP/1.1 200 OK
-GET /api/opportunities?server=east&sort=profit&limit=12 HTTP/1.1 200 OK
-GET /api/sources?server=west HTTP/1.1 200 OK
-```
-
-Verified path:
-
-```text
-Browser → Frontend :5173 → Vite /api proxy → 127.0.0.1:8000 → FastAPI → 200 OK
-```
-
-### GitHub Actions
-
-Representative exact-SHA successful run:
-
-```text
-Run ID: 33615308345
-Execution SHA: 289843227fa74f49e77f9174a22c27532a5eb8d0
-Result: success
-```
-
-Confirmed successful stages:
-
-- Python syntax
-- Full pytest
-- Frontend dependencies
+- FastAPI API responses
+- Collector lifecycle integration
+- AODP NATS connection and subscription
+- Live market-order message reception
+- SQLite persistence
+- SQLite integrity
 - Frontend production build
-- NATS validation
-- Live NATS ingestion
-- FastAPI runtime smoke test
-
-Separate runtime-validation Run `33615308321` also succeeded.
+- System Status Dashboard browser behavior
+- External browser access
+- Live backend integration
+- 300-second live accumulation
+- SQLite restart-preservation
 
 ## WHAT WAS NOT CONFIRMED
 
-No additional Phase 23-T.3 verification gap remains that blocks closeout. This phase did not add a new full browser-content E2E framework or repeat the entire live AODP-to-React pipeline as a new test suite.
+- There is no dedicated frontend database-health endpoint.
+- Database status is therefore intentionally `UNKNOWN`.
+- Collector status can be `UNKNOWN` when recent successful collection evidence is unavailable.
+- Future roadmap phases are not implemented.
+- Exact P1 Market Data Freshness thresholds and implementation details are not finalized.
+- Full end-to-end functionality of every future strategy interaction has not been established.
 
 ## CHANGES MADE
 
-Application changes already present before documentation closeout:
+Phase 24 application commit:
 
-- `frontend/src/services/api.js`: development API base changed to same-origin while preserving explicit local FastAPI fallback outside development.
-- `frontend/vite.config.js`: added `/api` development proxy to `http://127.0.0.1:8000`.
+`59499eadd5d37bbfbedd90ae2f21cb276f3d03ac`
 
-Documentation closeout:
+Message:
 
-- `docs/PROJECT_STATE.md` updated to VERIFIED / PASS.
-- `docs/HANDOFF.md` updated to VERIFIED / PASS / CLOSED.
+`feat: add system status dashboard`
 
-`docs/ROADMAP.md` was not modified because no roadmap change was required for this closeout.
+Phase 24 feature changes were made in:
+
+- `frontend/src/main.jsx`
+- `frontend/src/services/api.js`
+- `frontend/src/components/Layout.jsx`
+- `frontend/src/style.css`
+
+`frontend/vite.config.js` contains an environment-related change that was not part of the Phase 24 feature commit.
+
+The untracked lockfiles were not part of the feature commit and must remain untouched.
 
 ## TEST RESULTS
 
-```text
-pytest: 99 passed, 1 warning in 2.21s
-compileall: PASS
-frontend production build: PASS, 1 CSS warning
-```
+### Backend
 
-Warnings are non-fatal:
+`101 passed, 1 warning`
 
-- Starlette/httpx TestClient deprecation warning in pytest.
-- Vite CSS minification warning during frontend build.
+### Python compileall
 
-Neither warning is treated as a Phase 23-T.3 failure.
+`PASS`
 
-## CI RESULTS + RUN SHA
+### Frontend production build
 
-```text
-Run ID: 33615308345
-Execution SHA: 289843227fa74f49e77f9174a22c27532a5eb8d0
-Result: success
-```
+`PASS`
 
-Separate runtime-validation Run `33615308321`: success.
+## CI RESULT
 
-Do not confuse these results with historical CI runs at other SHAs.
+Workflow:
+
+`Phase 21 Runtime Validation`
+
+Run:
+
+`33843449468`
+
+Execution SHA:
+
+`59499eadd5d37bbfbedd90ae2f21cb276f3d03ac`
+
+Result:
+
+**SUCCESS**
+
+The workflow included live accumulation and SQLite restart-preservation verification.
 
 ## RUNTIME RESULTS
 
-Codespaces Browser ↔ FastAPI integration is verified. Browser requests used the frontend forwarded origin and were successfully proxied to the local FastAPI backend. `/api/sources`, `/api/strategies`, and `/api/opportunities` returned 200 OK, with corresponding backend GET logs.
+Observed Phase 24 runtime status:
 
-Historical Termux runtime evidence remains unchanged: approximately 56 minutes of FastAPI responsiveness, East NATS connectivity/subscription, more than 5,900 observed messages/orders, persistence to SQLite, and `PRAGMA integrity_check` returning `ok`.
+- Backend API → `ONLINE`
+- Collector → `UNKNOWN` when recent successful collection evidence was unavailable
+- AODP NATS → `CONNECTED`
+- Database → `UNKNOWN`
+- Market Engine → `AVAILABLE`
 
-Historical runtime error retained:
+The observed results matched the approved status semantics.
 
-```text
-OperationalError:
-index idx_market_price_history_lookup already exists
-```
+Live verification also confirmed:
 
-The exact interleaving was not captured; the current deterministic SQLite concurrency regression passed.
+- FastAPI responsiveness
+- AODP NATS live connectivity
+- Message reception
+- SQLite persistence
+- External browser access
+- Live accumulation
+- Restart preservation
 
 ## KNOWN ISSUES
 
-- One pytest Starlette/httpx deprecation warning.
-- One Vite CSS minification warning.
-- Existing GitHub Actions Node.js 20 deprecation warnings may remain.
+- Existing Starlette/httpx TestClient deprecation warning.
+- Existing frontend CSS warning concerning a malformed transition declaration.
+- Existing GitHub Actions Node.js 20 deprecation warning.
 
-These are warnings, not Phase 23-T.3 failures.
+These warnings were not treated as Phase 24 functional failures.
 
 ## CURRENT RISK
 
-Phase 23-T.3 has no known blocker based on the completed verification evidence.
+The next major product risk is stale market data being presented without a sufficiently clear indication of its age.
+
+The exact freshness policy has not yet been decided.
 
 ## NEXT EXACT STEPS
 
-Phase 23-T.3 is closed. For the next development task:
-
-1. Re-check the actual GitHub `main` HEAD.
-2. Re-read `docs/PROJECT_STATE.md`, `docs/ROADMAP.md`, and this handoff.
-3. Inspect the current repository before making changes.
-4. Follow the next explicitly selected roadmap phase without expanding scope.
+1. Begin **Phase P1 — Market Data Freshness** only after this documentation closeout is complete.
+2. Re-check the current GitHub `main` HEAD.
+3. Inspect the current market API and frontend data flow.
+4. Identify existing market-data timestamp fields.
+5. Define exact freshness semantics.
+6. Determine whether existing backend data is sufficient.
+7. Implement the minimum required change.
+8. Add focused regression coverage.
+9. Run full pytest.
+10. Run compileall.
+11. Run frontend production build.
+12. Perform runtime/browser verification as appropriate.
+13. Verify GitHub Actions against the exact commit SHA.
 
 ## DO NOT DO
 
-- Do not reopen Phase 23-T.3 for unrelated feature work.
-- Do not modify backend routes, CORS, dependencies, or tests without a separately justified defect.
-- Do not delete or commit `frontend/package-lock.json` or `package-lock.json` merely as cleanup.
-- Do not stop/restart a live Termux server without explicit approval.
-- Do not delete/reset the runtime database without explicit approval.
-- Do not weaken regression assertions.
-- Do not perform unrelated refactoring.
+- Do not start P1 implementation during this documentation closeout.
+- Do not modify unrelated functionality.
+- Do not weaken meaningful tests.
+- Do not use `git add .`.
+- Do not overwrite or delete `frontend/package-lock.json`.
+- Do not overwrite or delete `package-lock.json`.
+- Do not restart a running runtime environment without explicit approval.
+- Do not reset or delete the SQLite database.
+- Do not trigger manual collector execution against the live environment without explicit approval.
+- Do not treat previous chat state or old reports as the current Source of Truth.
