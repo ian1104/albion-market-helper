@@ -1,11 +1,74 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
-import { Badge, Metric, StatePanel, money, percent, text } from './common';
+import { Badge, Metric, StatePanel, money, percent, text, freshnessText, tone } from './common';
 
 function ItemIcon({ item, size = 'md' }) {
   const [failed, setFailed] = useState(false);
   if (!item?.icon || failed) return <div className={`item-icon-fallback ${size}`} aria-label="아이콘 없음">?</div>;
   return <img className={`item-icon ${size}`} src={item.icon} alt="" loading="lazy" onError={() => setFailed(true)} />;
+}
+
+function parseMarketTimestamp(value) {
+  if (value == null || value === '') return null;
+  const timestamp = new Date(value);
+  return Number.isNaN(timestamp.getTime()) ? null : timestamp;
+}
+
+function formatFreshnessAge(ageMinutes) {
+  if (ageMinutes == null || !Number.isFinite(ageMinutes)) return '확인 불가';
+  if (ageMinutes < 1) return '방금 전';
+  if (ageMinutes < 60) return `${Math.floor(ageMinutes)}분 전`;
+  if (ageMinutes < 1440) return `${Math.floor(ageMinutes / 60)}시간 전`;
+  return `${Math.floor(ageMinutes / 1440)}일 전`;
+}
+
+export function getMarketFreshness(row, now = new Date()) {
+  const candidates = [];
+
+  const sellPrice = Number(row?.sell_price_min);
+  const sellTimestamp = parseMarketTimestamp(row?.sell_price_min_date);
+
+  if (sellPrice > 0 && sellTimestamp) {
+    candidates.push(sellTimestamp);
+  }
+
+  const buyPrice = Number(row?.buy_price_max);
+  const buyTimestamp = parseMarketTimestamp(row?.buy_price_max_date);
+
+  if (buyPrice > 0 && buyTimestamp) {
+    candidates.push(buyTimestamp);
+  }
+
+  if (!candidates.length) {
+    return {
+      status: 'unknown',
+      ageMinutes: null,
+      timestamp: null,
+      label: '확인 불가',
+    };
+  }
+
+  const timestamp = new Date(
+    Math.min(...candidates.map(value => value.getTime()))
+  );
+
+  const ageMinutes = Math.max(
+    0,
+    (now.getTime() - timestamp.getTime()) / 60000
+  );
+
+  const status = ageMinutes < 15
+    ? 'fresh'
+    : ageMinutes < 30
+      ? 'recent'
+      : 'stale';
+
+  return {
+    status,
+    ageMinutes,
+    timestamp,
+    label: formatFreshnessAge(ageMinutes),
+  };
 }
 
 export function LineChart({ rows }) {
@@ -51,7 +114,9 @@ function ItemSearch({ onSelect }) {
 
 function CityTable({ cities, onSelect, selectedCity }) {
   if (!cities?.length) return <StatePanel title="도시별 시장 데이터가 없습니다." detail="현재 backend가 보유한 관측 데이터가 없습니다." />;
-  return <div className="market-table-wrap"><table className="market-table"><thead><tr><th>도시</th><th>최저 판매가</th><th>최고 구매가</th><th>관측 시각</th></tr></thead><tbody>{cities.map(row => <tr key={`${row.city}-${row.quality}`} className={row.city === selectedCity ? 'selected' : ''} onClick={() => onSelect(row.city)}><td>{row.city}</td><td>{money(row.sell_price_min)}</td><td>{money(row.buy_price_max)}</td><td>{text(row.updated_at, '—')}</td></tr>)}</tbody></table></div>;
+  return <div className="market-table-wrap"><table className="market-table"><thead><tr><th>도시</th><th>최저 판매가</th><th>최고 구매가</th><th>데이터 상태</th></tr></thead><tbody>{cities.map(row => {
+  const freshness = getMarketFreshness(row);
+  return <tr key={`${row.city}-${row.quality}`} className={row.city === selectedCity ? 'selected' : ''} onClick={() => onSelect(row.city)}><td>{row.city}</td><td>{money(row.sell_price_min)}</td><td>{money(row.buy_price_max)}</td><td><Badge tone={tone(freshness.status)}>{freshnessText(freshness.status)}</Badge><span className="muted">{` · ${freshness.label}`}</span></td></tr>;})}</tbody></table></div>;
 }
 
 export default function Market({ server, initialItemId = '' }) {
