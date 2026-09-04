@@ -1,146 +1,159 @@
 # Albion Market Helper — Roadmap
 
-This document describes planned or ongoing work. It is not a statement that every listed phase is currently implemented or verified.
+## CURRENT PHASE
 
-## Status vocabulary
+**Phase 24 — System Status Dashboard**
 
-- **PLANNED** — intended future work; implementation not established by the current repository state.
-- **IN PROGRESS** — active work in the current development cycle.
-- **IMPLEMENTED** — implementation exists; fresh verification may still be pending.
-- **VERIFIED** — implementation has current, relevant execution evidence.
-- **BLOCKED** — work cannot currently be completed because a required environment, dependency, or external condition is unavailable.
+**STATUS: COMPLETED / VERIFIED**
 
-## Current phase
+Phase 24 is implemented and verified.
 
-### Phase 23-T.2 — GitHub Actions Automated Verification
-**Status: COMPLETED / VERIFIED**
+The current application includes backend status, collector status, AODP NATS/liquidity status, database status semantics, and aggregate Market Engine availability in the frontend.
 
-The deterministic verification workflow was executed successfully against exact commit SHA `d15f10bd4b91053b79993cd8842f37bd9950b085`.
+## COMPLETED IMPLEMENTATION AREAS
 
-Run `33519639248` verified:
+The following areas are implemented and verified in the current project:
 
-- SQLite concurrency regression: PASS (3 passed).
-- Python compileall: PASS.
-- Full Python regression: PASS (99 passed, 1 warning, 3.35s).
-- Frontend dependency install: PASS.
-- Frontend production build: PASS.
-- Execution SHA matched the verification target SHA.
+- Market price persistence and querying
+- Historical market-price snapshots
+- Server isolation
+- AODP REST market-data collection
+- Historical market analysis
+- Price trend and spread analysis
+- Arbitrage analysis
+- Liquidity and order-lifecycle persistence
+- AODP NATS connectivity and market-order ingestion
+- Strategy engine
+- Crafting strategy analysis
+- Business-opportunity aggregation
+- Collector scheduler lifecycle integration
+- System Status Dashboard
 
-### Phase 23-T.1 — SQLite initialization/concurrency regression
-**Status: VERIFIED through Phase 23-T.2 deterministic CI**
+## FUTURE ROADMAP
 
-The repository contains synchronized, path-aware initialization and migration/index lifecycle handling, with regression coverage for concurrent initialization, repeated initialization, and concurrent liquidity persistence. The current implementation was exercised by the dedicated SQLite concurrency regression in Run `33519639248`.
+The following phases are planned work and must not be treated as implemented until separately verified.
 
-## Completed implementation areas
+### P1 — Market Data Freshness
 
-### Market data foundation
-**Status: IMPLEMENTED**
+**STATUS: PLANNED**
 
-- Current-price persistence/querying.
-- Append-only historical snapshots.
-- Server isolation for `east`, `west`, and `europe`.
-- AODP REST collection.
+Goal:
 
-### Market analysis
-**Status: IMPLEMENTED**
+Prevent stale market prices from appearing to users as if they were current.
 
-- Price statistics.
-- Trend and spread analysis.
-- Historical market analysis surfaces.
+Planned considerations:
 
-### Arbitrage
-**Status: IMPLEMENTED**
+- Display the age of market data.
+- Distinguish recent, aging, and stale data.
+- Consider user-facing states such as:
+  - 2 minutes ago
+  - 14 minutes ago
+  - 1 hour ago
+  - old/stale
+- Reuse existing timestamp data where sufficient.
+- Avoid backend changes if the existing API already provides sufficient information.
 
-- Arbitrage opportunity calculation.
-- Configurable gross/net profit model.
-- Data freshness handling.
-- Backend calculation ownership.
+The exact freshness thresholds and implementation approach are not yet finalized.
 
-### Liquidity and order lifecycle
-**Status: IMPLEMENTED**
+### P2 — Interactive Market Chart
 
-- Provider/adapter boundary for liquidity.
-- Executable quantity constrained by real available quantities.
-- Depth-weighted execution price and slippage.
-- Observational order lifecycle: `ACTIVE`, `EXPIRED`, `STALE`, `UNKNOWN`.
-- Separate order observations.
-- AODP NATS ingestion with server isolation.
+**STATUS: PLANNED**
 
-### Strategy/business aggregation
-**Status: IMPLEMENTED**
+Goal:
 
-- Strategy registry and common strategy contract.
-- Arbitrage strategy adapter.
-- Crafting strategy using normalized recipe/production-rule data when inputs exist.
-- Strategy engine with capital/risk filtering and ranking.
-- Strategy-neutral `BusinessOpportunity`.
-- Business Dashboard consuming normalized backend opportunities.
+Improve historical market-data visualization and interaction.
 
-### Phase 20 live collector work
-**Status: IMPLEMENTED; LIVE VERIFICATION IS EVIDENCE-SPECIFIC**
+Planned functionality:
 
-- Canonical marketplace mappings in the adapter.
-- Persistent NATS consumer behavior including reconnect/backoff, malformed-message isolation, order persistence, observation history, and graceful shutdown.
-- Regression coverage for restart recovery/server isolation.
-- Bounded live observation workflow.
+- Touch interaction on mobile.
+- Hover interaction on desktop.
+- Price/time tooltip.
+- Crosshair or equivalent point-selection interaction.
+- Clear visualization of historical price movement.
 
-## Phase 23-T workstream
+Exact chart library and final interaction design are not yet finalized.
 
-### Deterministic CI verification
-**Status: VERIFIED**
+### P3 — Strategy Tab Functionality Verification
 
-Workflow: `Phase 23-T.1 Automated Verification`
+**STATUS: PLANNED**
 
-Run: `33519639248`
+Goal:
 
-Execution SHA: `d15f10bd4b91053b79993cd8842f37bd9950b085`
+Review and verify the existing strategy-related frontend areas.
 
-The workflow uses exact-SHA checkout and separates deterministic regression from live NATS observation by setting `AODP_NATS_ENABLED=false` for Python jobs.
+Planned scope:
 
-## Warnings retained
+- City Arbitrage functionality review.
+- Crafting functionality review.
+- Identify which existing UI controls are functional.
+- Identify incomplete or placeholder interactions.
+- Implement only the minimum required functionality after inspection.
 
-The successful run emitted non-fatal warnings:
+No assumption should be made that every existing strategy UI element is already fully functional.
 
-- GitHub Actions Node.js 20 deprecation warnings for `actions/checkout@v4`, `actions/setup-python@v5`, and `actions/setup-node@v4`.
-- One pytest `StarletteDeprecationWarning` concerning `httpx` with `starlette.testclient`.
-- One Vite CSS minification warning: `Expected ":" [css-syntax-error]`.
+### P4 — Opportunity / Market Analysis Enhancement
 
-These did not change the successful conclusion of Run `33519639248`.
+**STATUS: PLANNED**
 
-## Historical evidence
+Goal:
 
-Historical CI Run `33500437389` at SHA `5bbc7e69af39dd940fcc6360b9dda51ef95dfee5` reported `97 passed / 2 failed`. It is retained as historical evidence and is not the current deterministic verification result.
+Improve the usefulness of market analysis and opportunity discovery.
 
-Historical Termux runtime validation reported sustained FastAPI responsiveness, East NATS connectivity/subscription, real message receipt/parsing/persistence, more than 5,900 messages/orders, and SQLite integrity check `ok`. It also observed `idx_market_price_history_lookup already exists`; the exact thread interleaving was not captured.
+Potential areas:
 
-## Future work
+- Better opportunity ranking.
+- Improved spread and liquidity interpretation.
+- More useful filtering.
+- More actionable market-analysis presentation.
 
-### Improved live market-data validation
-**Status: PLANNED**
+Exact scope must be defined from the current implementation before development begins.
 
-- Repeatable bounded live REST/NATS validation.
-- Explicit separation of connectivity, message receipt, parsing, persistence, and application responsiveness evidence.
+### P5 — AI Advisor
 
-### Production hardening
-**Status: PLANNED**
+**STATUS: PLANNED**
 
-- Continue tightening lifecycle, persistence, error isolation, and observability based on reproduced failures rather than speculative refactoring.
+Goal:
 
-### Frontend/product refinement
-**Status: PLANNED**
+Add an AI-assisted explanation and decision-support layer on top of deterministic market data.
 
-- Continue improving Business Dashboard usability, filtering, ranking presentation, and market-analysis workflows without moving business calculations into the frontend.
+Planned architecture principle:
 
-### Additional strategy modules
-**Status: PLANNED**
+- Raw market prices and economic calculations remain deterministic.
+- The AI layer interprets structured market results.
+- The AI should explain opportunities, risks, assumptions, and relevant market signals.
+- AI output should not replace the underlying market-data calculations.
 
-- Add independently registerable business strategies only when their data requirements and calculation rules are defined and implemented.
+Exact model, API integration, prompt architecture, cost controls, and safety/failure behavior are not yet finalized.
 
-## Scope rules
+## SCOPE RULES
 
-- Roadmap entries do not imply implementation unless marked accordingly.
-- A feature is not VERIFIED merely because source code exists.
-- Fixture PASS is not LIVE PASS.
-- Historical runtime evidence is not current runtime evidence.
-- Historical CI is not current CI.
-- No Phase should be expanded into unrelated refactoring without an explicit project decision.
+- Planned phases are not evidence of implemented functionality.
+- A phase becomes completed only after implementation and verification.
+- Current GitHub main is the source of truth.
+- Previous reports and conversations must not override the current repository state.
+- Each phase should use the minimum necessary change.
+- Regression tests must remain meaningful.
+- Runtime validation must be separated from code-level verification.
+- CI results must be interpreted against the exact commit SHA on which the workflow ran.
+
+## VERIFICATION BASELINE
+
+Latest verified application revision:
+
+`59499eadd5d37bbfbedd90ae2f21cb276f3d03ac`
+
+Commit:
+
+`feat: add system status dashboard`
+
+Latest verified CI run:
+
+`33843449468`
+
+Result:
+
+**SUCCESS**
+
+Next exact development target:
+
+**P1 — Market Data Freshness**
