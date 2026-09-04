@@ -77,6 +77,22 @@ export const api = {
       spread: spreadResponse.ok ? await spreadResponse.json() : null,
     };
   },
+  async systemStatus({ server }) {
+    const [collector, sources, liquidity] = await Promise.allSettled([
+      request('/api/collector/status'),
+      request(`/api/sources?server=${encodeURIComponent(server)}`),
+      request(`/api/liquidity/status?server=${encodeURIComponent(server)}`),
+    ]);
+
+    return {
+      backend: {
+        status: [collector, sources, liquidity].some(result => result.status === 'fulfilled') ? 'ONLINE' : 'UNKNOWN',
+      },
+      collector: collector.status === 'fulfilled' ? collector.value : null,
+      sources: sources.status === 'fulfilled' ? sources.value : null,
+      liquidity: liquidity.status === 'fulfilled' ? liquidity.value : null,
+    };
+  },
 };
 
 export { API };
