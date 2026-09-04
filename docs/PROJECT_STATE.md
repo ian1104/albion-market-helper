@@ -2,215 +2,220 @@
 
 ## CURRENT PHASE
 
-**Phase 23-T.3 — Backend ↔ Frontend Integration Verification**
+**Phase 24 — System Status Dashboard**
 
-**STATUS: VERIFIED / PASS**
+**STATUS: COMPLETED / VERIFIED**
 
-## CURRENT HEAD / VERIFICATION BASELINE
+## CURRENT HEAD SHA
 
-The Phase 23-T.3 application verification target was GitHub `main` SHA:
+`59499eadd5d37bbfbedd90ae2f21cb276f3d03ac`
 
-`289843227fa74f49e77f9174a22c27532a5eb8d0`
+Commit:
 
-This SHA contains the complete application change for the Phase 23-T.3 frontend API integration fix. Documentation closeout commits may advance `main` beyond this application verification SHA; the SHA above is the exact application revision against which the reported verification was performed.
+`feat: add system status dashboard`
+
+Parent:
+
+`88d5bfbadb3092df8875db9f8823428f2a34e0d7`
 
 ## CURRENT ARCHITECTURE
 
-Backend-first Albion Online market analysis application targeting Asia/East by default, with canonical server isolation for `east`, `west`, and `europe`.
+### Market Data Pipeline
 
-Current pipeline:
+AODP REST
+    ↓
+Market Data / Persistence
+    ↓
+SQLite
+    ↓
+FastAPI API
+    ↓
+React/Vite Frontend
 
-`AODP → AlbionApiService / AODPNatsAdapter → normalized market data → SQLite → AnalysisService / Liquidity → StrategyEngine → FastAPI → React Business Dashboard`
+### Liquidity Pipeline
 
-Major layers:
+AODP NATS
+    ↓
+Liquidity Collector / Adapter
+    ↓
+SQLite liquidity order + observation persistence
+    ↓
+FastAPI liquidity/status APIs
+    ↓
+Frontend System Status
 
-- Python backend with FastAPI.
-- SQLite persistence for current prices, historical snapshots, collection runs, liquidity orders, and order observations.
-- AODP REST price collection.
-- Optional persistent AODP NATS consumers for observational order-book/liquidity data.
-- Market analysis and arbitrage services.
-- StrategyRegistry / StrategyEngine / BusinessOpportunity aggregation.
-- React/Vite frontend Business Dashboard plus market-analysis and arbitrage views.
+## IMPLEMENTED FEATURES
 
-## PHASE 23-T.3 IMPLEMENTED
-
-The application change is limited to two frontend files:
-
-- `frontend/src/services/api.js`
-- `frontend/vite.config.js`
-
-API base behavior:
-
-```js
-const API = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '' : 'http://127.0.0.1:8000');
-```
-
-Development Vite proxy:
-
-```text
-/api/* → http://127.0.0.1:8000/api/*
-```
-
-This makes development browser requests same-origin while preserving the explicit local FastAPI fallback outside development. Backend API routes, CORS, dependencies, tests, and business logic were not changed.
+- Market price persistence and querying
+- Historical market-price snapshots
+- Server isolation
+- AODP REST market-data collection
+- Historical market analysis
+- Price trend and spread analysis
+- Arbitrage analysis
+- Liquidity and order-lifecycle persistence
+- AODP NATS connectivity and market-order ingestion
+- Strategy engine
+- Crafting strategy analysis
+- Business-opportunity aggregation
+- Collector scheduler lifecycle integration
+- System Status Dashboard
 
 ## VERIFIED FEATURES
 
-### Local verification at application SHA `289843227fa74f49e77f9174a22c27532a5eb8d0`
+Phase 23-T.4 and Phase 24 were verified against the current implementation.
 
-- Full pytest: **99 passed, 1 warning, 2.21s**.
-- Python compileall: **PASS** — `python -m compileall -q .` exited successfully with no output.
-- Frontend production build: **PASS** — Vite `5.4.21`, 42 modules transformed, build completed successfully in 1.33s.
+Verified areas include:
 
-### Codespaces Browser ↔ Backend integration
+- FastAPI application startup
+- Collector scheduler startup through application lifecycle
+- AODP NATS connection and subscription
+- Live market-order message reception
+- SQLite persistence
+- SQLite integrity
+- API responses
+- Frontend production build
+- System Status Dashboard browser behavior
+- External browser access
+- Runtime live accumulation
+- SQLite restart-preservation behavior
 
-Actual Browser Network evidence:
+## UNVERIFIED FEATURES / LIMITATIONS
 
-```text
-/api/sources?server=east → 200 OK
-```
+- There is no dedicated frontend database-health endpoint. The Database status therefore remains UNKNOWN rather than being inferred from unrelated components.
+- Collector status may remain UNKNOWN when recent successful collection evidence is unavailable.
+- Future roadmap phases are not implemented unless explicitly listed above as implemented and verified.
+- No claim is made that all future frontend strategy interactions are fully implemented.
 
-Request URL used the forwarded frontend origin:
+## STATUS DASHBOARD SEMANTICS
 
-```text
-https://animated-bassoon-7xqw4xqq7jvhxxgg-5173.app.github.dev/api/sources?server=east
-```
+### Backend API
 
-The browser did not directly call `127.0.0.1:8000`.
+- Successful status request → ONLINE
+- Request failure → UNKNOWN
 
-Backend logs confirmed corresponding successful requests:
+### Collector
 
-```text
-GET /api/sources?server=east HTTP/1.1 200 OK
-GET /api/strategies HTTP/1.1 200 OK
-GET /api/sources?server=europe HTTP/1.1 200 OK
-GET /api/opportunities?server=east&sort=profit&limit=12 HTTP/1.1 200 OK
-GET /api/sources?server=west HTTP/1.1 200 OK
-```
+- Running → RUNNING
+- Not running with recent successful collection evidence → IDLE
+- Clear recent collection failure → ERROR
+- Endpoint failure → UNKNOWN
 
-Verified runtime path:
+### AODP NATS / Liquidity
 
-```text
-Browser
-  ↓
-Frontend :5173
-  ↓ /api/...
-Vite proxy
-  ↓
-127.0.0.1:8000
-  ↓
-FastAPI
-  ↓
-200 OK
-```
+- Connected and subscription active → CONNECTED
+- Connection unavailable → OFFLINE
+- Lack of recent messages alone does not imply OFFLINE
+- Request failure → UNKNOWN
 
-### GitHub Actions
+### Database
 
-Representative successful CI run at the exact application verification SHA:
+No dedicated database-health endpoint exists in the frontend status flow.
 
-```text
-Run ID: 33615308345
-Execution SHA: 289843227fa74f49e77f9174a22c27532a5eb8d0
-Result: success
-```
+Therefore:
 
-Confirmed successful stages include:
+- Database health cannot be safely inferred from collector or backend status.
+- Frontend status → UNKNOWN
 
-- Python syntax — PASS
-- Full pytest — PASS
-- Frontend dependencies — PASS
-- Frontend production build — PASS
-- NATS validation — PASS
-- Live NATS ingestion — PASS
-- FastAPI runtime smoke test — PASS
+### Market Engine
 
-Separate runtime-validation Run `33615308321` also completed successfully.
+The Market Engine is an aggregate availability indicator:
 
-## VERIFICATION MATRIX
+- Backend API online → AVAILABLE
+- Backend unavailable → UNKNOWN
 
-| Component | Result |
-|---|---|
-| Frontend development API base | VERIFIED |
-| Vite `/api` proxy | VERIFIED |
-| Browser → Frontend | VERIFIED |
-| Frontend → FastAPI through proxy | VERIFIED |
-| `/api/sources` | 200 OK |
-| `/api/strategies` | 200 OK |
-| `/api/opportunities` | 200 OK |
-| Backend corresponding GET logs | VERIFIED |
-| Local pytest | 99 passed |
-| Python compileall | PASS |
-| Frontend production build | PASS |
-| Exact-SHA GitHub Actions | PASS |
+## KNOWN ISSUES / WARNINGS
 
-## UNVERIFIED / OUT OF SCOPE
-
-- This Phase does not establish a new full real-AODP-to-React data-content validation beyond the existing runtime/CI evidence listed above.
-- No new E2E framework was added.
-- No backend, CORS, dependency, or business-logic changes were made.
-
-## KNOWN WARNINGS
-
-- Pytest: one `StarletteDeprecationWarning` because using httpx with `starlette.testclient` is deprecated. This is non-fatal and unrelated to the Phase 23-T.3 API proxy change.
-- Frontend build: one non-fatal Vite CSS minification warning. This is unrelated to the Phase 23-T.3 API proxy change and was not modified.
-- GitHub Actions may retain Node.js 20 deprecation warnings for existing actions.
-
-Warnings are not recorded as failures.
-
-## HISTORICAL EVIDENCE / ISSUES
-
-Historical Termux runtime validation remains evidence of:
-
-- approximately 56 minutes of FastAPI responsiveness,
-- East NATS connection/subscription,
-- real AODP NATS messages received, parsed, and persisted,
-- more than 5,900 messages/orders observed,
-- SQLite `PRAGMA integrity_check` returning `ok`.
-
-Historical runtime error retained for context:
-
-```text
-OperationalError:
-index idx_market_price_history_lookup already exists
-```
-
-The exact thread interleaving was not captured. The current deterministic SQLite concurrency regression passed.
-
-## CURRENT RISKS
-
-No Phase 23-T.3 blocker remains based on the completed verification evidence. The retained warnings above are non-fatal and unrelated to the Phase 23-T.3 integration fix.
+- Pytest emits an existing Starlette deprecation warning related to the httpx/TestClient integration.
+- Frontend production build emits an existing CSS warning related to a malformed transition declaration in the original stylesheet.
+- GitHub Actions reports the existing Node.js 20 deprecation warning.
+- These warnings were not treated as Phase 24 functional failures.
 
 ## LAST TEST RESULTS
 
-```text
-Application verification SHA: 289843227fa74f49e77f9174a22c27532a5eb8d0
-pytest -q: 99 passed, 1 warning in 2.21s
-python -m compileall -q .: PASS
-cd frontend && npm run build: PASS
-```
+### Backend regression
+
+101 passed, 1 warning
+
+### Python compile check
+
+compileall PASS
+
+### Frontend production build
+
+PASS
 
 ## LAST CI RESULT
 
-```text
-Run ID: 33615308345
-Execution SHA: 289843227fa74f49e77f9174a22c27532a5eb8d0
-Result: success
-```
+Workflow:
 
-Separate runtime-validation Run `33615308321`: success.
+Phase 21 Runtime Validation
+
+Run:
+
+33843449468
+
+Commit SHA:
+
+59499eadd5d37bbfbedd90ae2f21cb276f3d03ac
+
+Result:
+
+SUCCESS
+
+The run included live accumulation and SQLite restart-preservation verification.
 
 ## LAST RUNTIME RESULT
 
-Codespaces Browser ↔ FastAPI integration was directly verified through the frontend forwarded origin and backend HTTP logs. `/api/sources`, `/api/strategies`, and `/api/opportunities` requests returned 200 OK through the Vite development proxy path.
+Phase 24 runtime verification confirmed:
+
+- FastAPI API responses
+- System Status Dashboard
+- Desktop Sidebar status display
+- Mobile Header status display
+- Live backend integration
+- AODP NATS live connectivity
+- External browser access
+- 300-second live data accumulation
+- SQLite restart-preservation
+
+Observed status behavior included:
+
+- Backend API → ONLINE
+- Collector → UNKNOWN when recent success evidence was unavailable
+- AODP NATS → CONNECTED
+- Database → UNKNOWN
+- Market Engine → AVAILABLE
+
+These results matched the approved Phase 24 semantics.
 
 ## NEXT EXACT STEPS
 
-Phase 23-T.3 is closed. Do not perform additional work under this phase. Future work must follow `docs/ROADMAP.md` and begin by re-checking the actual GitHub `main` HEAD and project-state documents.
+**Next phase: P1 — Market Data Freshness**
+
+Before implementation:
+
+1. Re-check current GitHub main.
+2. Inspect the current market API/frontend data flow.
+3. Identify the existing timestamp fields used for market data.
+4. Define exact freshness semantics.
+5. Determine whether existing backend data is sufficient.
+6. Implement the minimum required change.
+7. Run focused regression tests.
+8. Run full pytest.
+9. Run compileall.
+10. Run frontend production build.
+11. Perform runtime/browser verification where appropriate.
+12. Verify GitHub Actions against the exact commit SHA.
 
 ## DO NOT DO
 
-- Do not expand Phase 23-T.3 into unrelated feature development or refactoring.
-- Do not modify backend routes, CORS, dependencies, or tests solely to revisit this closed phase.
-- Do not delete or commit the locally observed untracked lockfiles merely for cleanup.
-- Do not stop/restart a live Termux server without explicit approval.
-- Do not delete/reset the runtime database without explicit approval.
-- Do not weaken regression assertions.
+- Do not modify unrelated features during P1.
+- Do not weaken or remove meaningful tests.
+- Do not use git add ..
+- Preserve the existing untracked frontend/package-lock.json and package-lock.json.
+- Do not restart a running runtime environment without explicit approval.
+- Do not reset or delete the SQLite database.
+- Do not trigger manual collector execution against the live environment without explicit approval.
+- Do not treat old reports or previous chat state as the current source of truth.
+- Do not start P1 implementation as part of this documentation closeout.
